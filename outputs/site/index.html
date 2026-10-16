@@ -916,12 +916,12 @@ function dlName(){
   return "dashboard-" + nm + "-" + ds + ".png";
 }
 
-async function panelPNG(){
+async function panelPNG(ignore){
   if (typeof html2canvas !== "function") throw new Error("Pustaka ekspor PNG belum termuat (butuh koneksi internet).");
   const panel = document.querySelector(".panel.active");
   if (!panel) return null;
   const bg = getComputedStyle(document.body).backgroundColor;
-  const canvas = await html2canvas(panel, { scale: 3, backgroundColor: bg, logging: false, useCORS: true });
+  const canvas = await html2canvas(panel, { scale: 3, backgroundColor: bg, logging: false, useCORS: true, ignoreElements: ignore });
   const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
   return { canvas: canvas, blob: blob };
 }
@@ -944,7 +944,9 @@ pngBtn.onclick = async () => {
   finally { pngBtn.disabled = false; pngBtn.textContent = old; }
 };
 
-/* Share the current view as a PNG plus the AI summary over WhatsApp.
+/* Share the current view as a PNG plus the AI summary over WhatsApp. The image
+   is the progress tab only - the summary box is left out and travels as the
+   message caption instead.
    The Web Share API can only carry a file where the OS offers a share sheet
    (mobile, Chrome desktop). Everywhere else we download the PNG and open a
    wa.me text link, so the picture is attached by hand.
@@ -958,7 +960,7 @@ document.getElementById("wabtn").onclick = async () => {
   const msg = head + (abody ? "\n\n" + abody : "");
   btn.disabled = true; btn.textContent = "Menyiapkan…";
   try {
-    const shot = await panelPNG();
+    const shot = await panelPNG(el => el.id === "aisum");
     const file = shot ? new File([shot.blob], dlName(), { type: "image/png" }) : null;
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], text: msg }); return; }
