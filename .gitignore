@@ -6,6 +6,7 @@ outputs/csv/*
 inputs/session_cache.json
 inputs/manual_session.json
 venv/
+images/
 __pycache__/
 *.pyc
 .DS_Store
