@@ -266,6 +266,9 @@ _SHELL = r"""<!DOCTYPE html>
   .bv{color:var(--mut);white-space:nowrap;text-align:right}
   .bp{color:var(--faint)}
   .more{color:var(--mut);font-size:11px;margin-top:8px}
+  .sec.zoomable{cursor:zoom-in;transition:border-color .15s}
+  .sec.zoomable:hover{border-color:var(--acc)}
+  .cmmore{color:var(--mut);font-size:11px;margin:0 0 10px}
   .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:var(--mut)}
   .legend span{display:inline-flex;align-items:center;gap:5px}
   .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
@@ -400,6 +403,16 @@ _SHELL = r"""<!DOCTYPE html>
     <div class="modalfoot">
       <button id="sesscancel" class="pngbtn">Batal</button>
       <button id="sesssave" class="pngbtn">Simpan</button>
+    </div>
+  </div>
+</div>
+<div id="chartmodal" class="modal" style="display:none">
+  <div class="modalbox" role="dialog" aria-modal="true" aria-label="Perbesar grafik">
+    <h3 id="cmtitle"></h3>
+    <div class="cmmore" id="cmsub"></div>
+    <div id="cmbody"></div>
+    <div class="modalfoot">
+      <button id="cmclose" class="pngbtn">Tutup</button>
     </div>
   </div>
 </div>
@@ -590,25 +603,39 @@ function groupCount(getter){
   return [...m.entries()].map(([k,v]) => ({k,v})).sort((a,b) => b.v - a.v || a.k.localeCompare(b.k));
 }
 
+function barHTML(items, total){
+  const max = Math.max(...items.map(i => i.v), 1);
+  return items.map(({k,v}) =>
+    '<div class="bar" title="' + esc(k) + ': ' + v + '">' +
+      '<div class="bl">' + esc(k) + '</div>' +
+      '<div class="btrack"><div class="bfill" style="width:' + (v / max * 100).toFixed(1) + '%"></div></div>' +
+      '<div class="bv">' + v.toLocaleString("id-ID") + ' <span class="bp">' + (v / total * 100).toFixed(1) + '%</span></div>' +
+    '</div>').join("");
+}
+
 function renderDashboard(){
   const grid = document.getElementById("chartgrid");
   grid.innerHTML = CHARTS.map(([id, title]) =>
-    '<div class="sec"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>').join("");
+    '<div class="sec zoomable"><h3>' + esc(title) + '</h3><div id="' + id + '"></div></div>').join("");
   for (const [id, title, getter, top] of CHARTS){
     const items = groupCount(getter);
     const el = document.getElementById(id);
     if (!items.length){ el.innerHTML = '<div class="empty">tidak ada data</div>'; continue; }
     const total = items.reduce((s,i) => s + i.v, 0) || 1;
     const shown = top ? items.slice(0, top) : items;
-    const max = Math.max(...shown.map(i => i.v));
-    el.innerHTML = shown.map(({k,v}) =>
-      '<div class="bar" title="' + esc(k) + ': ' + v + '">' +
-        '<div class="bl">' + esc(k) + '</div>' +
-        '<div class="btrack"><div class="bfill" style="width:' + (v / max * 100).toFixed(1) + '%"></div></div>' +
-        '<div class="bv">' + v.toLocaleString("id-ID") + ' <span class="bp">' + (v / total * 100).toFixed(1) + '%</span></div>' +
-      '</div>').join("") +
-      (top && items.length > top ? '<div class="more">+ ' + (items.length - top) + ' lainnya dari ' + items.length + ' kategori</div>' : "");
+    el.innerHTML = barHTML(shown, total) +
+      (top && items.length > top ? '<div class="more">+ ' + (items.length - top) + ' lainnya dari ' + items.length + ' kategori &mdash; klik untuk lihat semua</div>' : "");
+    const sec = el.parentElement;
+    sec.onclick = () => openChart(title, items);
   }
+}
+
+function openChart(title, items){
+  const total = items.reduce((s,i) => s + i.v, 0) || 1;
+  document.getElementById("cmtitle").textContent = title;
+  document.getElementById("cmsub").textContent = items.length.toLocaleString("id-ID") + " kategori";
+  document.getElementById("cmbody").innerHTML = barHTML(items, total);
+  document.getElementById("chartmodal").style.display = "flex";
 }
 
 /* ---------------- PROGRESS TAB (reference: monit_vip_horti_s.py) ---------------- */
@@ -1104,7 +1131,12 @@ document.getElementById("sesssave").onclick = async () => {
     sessMsg.className = "modalmsg err"; sessMsg.textContent = "Gagal menyimpan: " + e.message;
   } finally { btn.disabled = false; }
 };
-(async () => {
+const cmModal = document.getElementById("chartmodal");
+const cmModal = document.getElementById("chartmodal");
+const cmClose = document.getElementById("cmclose");
+cmClose.onclick = () => cmModal.style.display = "none";
+cmModal.onclick = (e) => { if (e.target === cmModal) cmModal.style.display = "none"; };
+
   let me = null;
   try { const r = await fetch("api/me"); if (r.ok){ me = await r.json(); BACKEND = true; } else BACKEND = false; } catch(e){ BACKEND = false; }
   refreshVisible(); sessVisible();
@@ -1136,3 +1168,7 @@ document.getElementById("sesssave").onclick = async () => {
 
 if __name__ == "__main__":
     build_site()
+
+
+
+
