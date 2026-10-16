@@ -1139,9 +1139,9 @@ pngBtn.onclick = async () => {
 /* Share the current view as a PNG plus the AI summary over WhatsApp. The image
    is the progress tab only - the summary box is left out and travels as the
    message caption instead.
-   The Web Share API can only carry a file where the OS offers a share sheet
-   (mobile, Chrome desktop). Everywhere else we download the PNG and open a
-   wa.me text link, so the picture is attached by hand.
+   Where the OS offers a share sheet we hand WhatsApp the file and the caption
+   in one call. Everywhere else we open a wa.me link that already carries the
+   caption and download the PNG to attach by hand.
    ponytail: one-tap send from any browser would need the WhatsApp Cloud API
    (a Meta business number plus a webhook) - that is server work, not built here. */
 document.getElementById("wabtn").onclick = async () => {
@@ -1150,17 +1150,25 @@ document.getElementById("wabtn").onclick = async () => {
   const head = (META.name || "Progres") + " \u2022 " + periodName(CUR.pid) +
                " \u2022 n=" + (DATA.length || 0).toLocaleString("id-ID");
   const msg = head + (abody ? "\n\n" + abody : "");
+  const url = "https://wa.me/?text=" + encodeURIComponent(msg);
+  /* Route and tab have to be decided here, before the render: both probes are
+     synchronous, and a window opened after an await is no longer inside the
+     click gesture, so the browser blocks it as a popup. */
+  const canNative = !!(navigator.share && navigator.canShare &&
+                       navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] }));
+  const waWin = canNative ? null : window.open(url, "_blank");
+  if (waWin) waWin.opener = null;
   btn.disabled = true; btn.textContent = "Menyiapkan…";
   try {
     const shot = await panelPNG();
     const file = shot ? new File([shot.blob], dlName(), { type: "image/png" }) : null;
-    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    if (canNative && file) {
       try { await navigator.share({ files: [file], text: msg }); return; }
       catch(e){ if (e && e.name === "AbortError") return; }
     }
     if (shot) grabPNG(shot.blob);
-    window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank", "noopener");
-  } catch(e){ alert("Gagal mengirim ke WhatsApp: " + e.message); }
+    if (!waWin) window.open(url, "_blank", "noopener");
+  } catch(e){ if (waWin) waWin.close(); alert("Gagal mengirim ke WhatsApp: " + e.message); }
   finally { btn.disabled = false; btn.textContent = label; }
 };
 
