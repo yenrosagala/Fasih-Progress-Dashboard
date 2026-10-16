@@ -1,0 +1,15 @@
+outputs/*
+!outputs/site/
+!outputs/csv/
+outputs/csv/*
+!outputs/csv/survey_collection_deadline_adjusted.csv
+inputs/session_cache.json
+inputs/manual_session.json
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.claude/
+.Rhistory
+.Rproj.user/

@@ -1,0 +1,87 @@
+{
+  "selected_surveys": [
+    {
+      "name": "[ PENDATAAN ] SITASI 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "fb9e882f-3e35-4c28-8614-1fff27c88537",
+      "surveyPeriodName": "Pendataan SITASI 2026",
+      "surveyPeriodStartDate": "2026-10-15",
+      "surveyPeriodEndDate": "2026-11-14"
+    },
+    {
+      "name": "[PELAKSANAAN] SKGB-KERING 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "1b5c625f-66dc-4127-b8cd-64e97c5aff78",
+      "surveyPeriodName": "2026 - Pelaksanaan 1",
+      "surveyPeriodStartDate": "2026-05-25",
+      "surveyPeriodEndDate": "2026-10-02"
+    },
+    {
+      "name": "[PELAKSANAAN] SKGB-GILING 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "7a1ba1bc-b5dd-4e5f-a2f5-a7610f719dd2",
+      "surveyPeriodName": "2026 - Pelaksanaan",
+      "surveyPeriodStartDate": "2026-05-25",
+      "surveyPeriodEndDate": "2026-10-02"
+    },
+    {
+      "name": "VPVN VN-Horti (NRT) 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "c3ed3362-c12c-49f0-a1ad-60ed7e273e51",
+      "surveyPeriodName": "Periode 1",
+      "surveyPeriodStartDate": "2026-04-24",
+      "surveyPeriodEndDate": "2026-09-30"
+    },
+    {
+      "name": "VPVN VP-Horti (Perusahaan) 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "c2ef19dc-4f53-48f5-a219-80bd0f94ab45",
+      "surveyPeriodName": "Periode 1",
+      "surveyPeriodStartDate": "2026-04-30",
+      "surveyPeriodEndDate": "2026-10-01"
+    },
+    {
+      "name": "VPEK 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "a151a507-1650-46d8-aa1a-4b952051645b",
+      "surveyPeriodName": "2026",
+      "surveyPeriodStartDate": "2026-04-01",
+      "surveyPeriodEndDate": "2026-07-06"
+    },
+    {
+      "name": "[PELAKSANAAN] VIP-HORTI.S",
+      "type": "pencacahan",
+      "surveyPeriodId": "4eb4e9bd-029c-40f7-90a7-ced3a628d3b8",
+      "surveyPeriodName": "2026 - Triwulan 3",
+      "surveyPeriodStartDate": "2026-09-30",
+      "surveyPeriodEndDate": "2026-10-17"
+    },
+    {
+      "name": "[PENCACAHAN] LTB 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "e5bd6d09-8197-417f-9095-7c9f596f49c4",
+      "surveyPeriodName": "Periode 1",
+      "surveyPeriodStartDate": "2026-01-01",
+      "surveyPeriodEndDate": "2026-12-31"
+    },
+    {
+      "name": "[PENCACAHAN] LTP 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "6cc3b10d-5bed-4677-a981-675ca6363359",
+      "surveyPeriodName": "Periode 1",
+      "surveyPeriodStartDate": "2026-01-01",
+      "surveyPeriodEndDate": "2026-12-31"
+    },
+    {
+      "name": "PASSENGER EXIT SURVEY (PES) 2026",
+      "type": "pencacahan",
+      "surveyPeriodId": "bd26aac6-fb42-4956-bb6b-0bb7c8603609",
+      "surveyPeriodName": "Juni 2026",
+      "surveyPeriodStartDate": "2026-06-01",
+      "surveyPeriodEndDate": "2026-07-07"
+    }
+  ],
+  "last_updated": "2026-10-16",
+  "chart_title": "Progres Pendataan SITASI 2026",
+  "palette": "Ocean"
+}
