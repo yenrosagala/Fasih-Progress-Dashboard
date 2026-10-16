@@ -918,9 +918,12 @@ function initBackend(){
       const picker = document.getElementById("picker");
       picker.innerHTML = list.map(s => '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>").join("");
       let want = new URLSearchParams(location.search).get("survey");
+      if (!want) { try { want = localStorage.getItem("fasih-survey"); } catch(e){} }
       if (!want || !list.some(s => s.id === want)) want = list[0].id;
-      picker.value = want;
-      setStep(1);
+      let lastPid = "";
+      try { lastPid = localStorage.getItem("fasih-period") || ""; } catch(e){}
+      if (lastPid) openSurvey(want, lastPid);
+      else { picker.value = want; setStep(1); }
     })
     .catch(e => {
       showNotice("Gagal memuat daftar survei: " + e.message, true);
@@ -930,6 +933,7 @@ function initBackend(){
 
 function openSurvey(sid, wantPid){
   CUR = { sid: sid, pid: "" };
+  try { localStorage.setItem("fasih-survey", sid); } catch(e){};
   document.getElementById("picker").value = sid;
   try { history.replaceState(null, "", "?survey=" + encodeURIComponent(sid)); } catch(e){}
   showNotice("Memuat periode\u2026", false);
@@ -946,17 +950,19 @@ function openSurvey(sid, wantPid){
       periodSel.innerHTML = periods.map(p =>
         '<option value="' + esc(p.id) + '"' + (p.cached ? ' data-cached="1"' : "") + ">" +
         esc(p.name || p.id) + (p.cached ? " \u2713" : "") + "</option>").join("");
-      let def = wantPid && periods.some(p => p.id === wantPid) ? wantPid : "";
+      const hasWant = !!wantPid && periods.some(p => p.id === wantPid);
+      let def = hasWant ? wantPid : "";
       if (!def){ const cached = periods.filter(p => p.cached); def = (cached[cached.length-1] || periods[periods.length-1]).id; }
       periodSel.value = def;
       refreshVisible();
-      if (wantPid) openPeriod(wantPid); else setStep(2);
+      if (hasWant) openPeriod(wantPid); else setStep(2);
     })
     .catch(e => showNotice("Gagal memuat periode: " + e.message, true));
 }
 
 function openPeriod(pid){
   CUR.pid = pid;
+  try { localStorage.setItem("fasih-period", pid); } catch(e){};
   const sel = document.getElementById("period");
   const cur = sel.options[sel.selectedIndex];
   const pname = (cur && cur.value === pid) ? cur.textContent.replace(/\s*\u2713$/, "") : pid;
