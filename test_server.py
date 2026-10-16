@@ -360,52 +360,6 @@ def test_period_dates():
     print("period-dates: ok")
 
 
-def test_summarize():
-    """AI summary endpoint: gated on the key, rejects empty stats, forwards the
-    aggregates to Gemini and returns the text. No network (httpx client stubbed)."""
-    seen = {}
-
-    class _Resp:
-        status_code = 200
-        text = "ok"
-
-        def json(self):
-            return {"candidates": [{"content": {"parts": [{"text": "Ringkasan.\n- Poin satu"}]}}]}
-
-    class _Client:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def post(self, url, json=None, headers=None):
-            seen.update(url=url, body=json, headers=headers)
-            return _Resp()
-
-    stats = {"jumlah_sampel": 100, "persen_submit_plus": 42.5, "sisa_hari": 3}
-    orig = (server.GEMINI_API_KEY, server.GEMINI_MODEL, server.httpx.AsyncClient)
-    try:
-        server.GEMINI_API_KEY = ""
-        with TestClient(server.app) as c:
-            assert c.post("/api/summarize", json={"stats": stats}).status_code == 503
-
-        server.GEMINI_API_KEY = "k"
-        server.GEMINI_MODEL = "gemini-test"
-        server.httpx.AsyncClient = _Client
-        with TestClient(server.app) as c:
-            assert c.post("/api/summarize", json={}).status_code == 400
-            assert c.post("/api/summarize", json={"stats": {}}).status_code == 400
-            r = c.post("/api/summarize", json={"stats": stats})
-            assert r.status_code == 200, r.text
-            assert r.json() == {"summary": "Ringkasan.\n- Poin satu", "model": "gemini-test"}
-    finally:
-        (server.GEMINI_API_KEY, server.GEMINI_MODEL, server.httpx.AsyncClient) = orig
-
-    # the key travels in a header, never the URL; and the prompt carries the numbers
-    assert "gemini-test:generateContent" in seen["url"], seen["url"]
-    assert "key=" not in seen["url"] and seen["headers"]["x-goog-api-key"] == "k"
-    assert "42.5" in seen["body"]["contents"][0]["parts"][0]["text"]
-    print("summarize: ok")
-
-
 if __name__ == "__main__":
     test_cookie()
     test_manifest()
@@ -417,5 +371,4 @@ if __name__ == "__main__":
     test_on_demand()
     test_login()
     test_period_dates()
-    test_summarize()
     print("test_server OK")

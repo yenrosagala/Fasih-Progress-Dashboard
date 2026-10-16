@@ -332,10 +332,6 @@ _SHELL = r"""<!DOCTYPE html>
   .emptystate svg{color:var(--mut)}
   .emptystate h3{margin:0;font-size:15px}
   .emptystate p{margin:0;max-width:540px;color:var(--mut);font-size:13px}
-  .aiwrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%}
-  .aisum{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:10px;padding:14px 16px}
-  .aisum h4{margin:0 0 8px;font-size:13px;color:var(--acc);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  .aisum .abody{white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--fg)}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
   @media (max-width:520px){header,.wrap{padding-left:12px;padding-right:12px}.stepbody{padding:12px}.filters input{min-width:0;width:100%}}
 </style>
@@ -408,11 +404,6 @@ _SHELL = r"""<!DOCTYPE html>
     <section id="panel-progress" class="panel">
       <div class="pmeta" id="pmeta"></div>
       <div class="cards" id="pkpi"></div>
-      <div class="aiwrap">
-        <button id="aibtn" class="pngbtn" style="display:none">&#10024; Ringkas dengan AI</button>
-        <span class="gen" id="aifoot"></span>
-      </div>
-      <div class="aisum" id="aisum" style="display:none"></div>
       <div class="grid" id="progressgrid"></div>
     </section>
   </div>
@@ -806,7 +797,6 @@ function renderProgress(){
   if (hasKab) sections.push(sec("Prioritas: Sisa Sampel Terbanyak", "10 kabupaten dengan sisa (belum submit+) terbanyak",
       priorityRows(kabs, days)));
   document.getElementById("progressgrid").innerHTML = sections.join("");
-  document.getElementById("aibtn").style.display = (BACKEND && AI_ON && filtered.length) ? "" : "none";
 }
 
 /* ---------------- DATA TAB ---------------- */
@@ -897,7 +887,6 @@ function applySurvey(s){
   refreshVisible();
 
   const empty = !DATA.length;
-  document.getElementById("aisum").style.display = "none";
   document.getElementById("emptystate").style.display = empty ? "" : "none";
   document.getElementById("filters").style.display = empty ? "none" : "";
   const tabsEl = document.querySelector(".tabs");
@@ -1128,7 +1117,6 @@ pngBtn.onclick = async () => {
 /* Refresh button: only works when served by the Phase 2 backend (server.py).
    Static hosting has no api/*, so detection hides the button. */
 let BACKEND = false;
-let AI_ON = false;
 let SESSION_WARN = "";
 const refreshBtn = document.getElementById("refresh");
 const REFRESH_LABEL = "\u21BB Perbarui";
@@ -1183,60 +1171,6 @@ function setEmptyBusy(b){
 }
 document.getElementById("es-go").onclick = scrapePeriod;
 refreshBtn.onclick = scrapePeriod;
-
-/* Progress tab: AI summary from pre-aggregated numbers (no per-sample rows). */
-function aiStats(){
-  const all = aggregate(filtered), days = daysInfo();
-  const provs = COLUMNS.some(c => c.key === "prov") ? aggGroups(filtered, "prov") : [];
-  const kabs  = COLUMNS.some(c => c.key === "kab")  ? aggGroups(filtered, "kab")  : [];
-  const row = o => ({ wilayah:o.g, total:o.total, submit_plus_pct:+pctSubmit(o).toFixed(1),
-                      sisa_belum_submit:o.total - submitUp(o), sudah_assign_pct:+pctAssign(o).toFixed(1) });
-  const byPct = a => a.slice().sort((x,y) => pctSubmit(y) - pctSubmit(x));
-  return {
-    survei: META.name || "",
-    periode: periodName(CUR.pid),
-    tanggal_data: fmtStamp(META.generated),
-    periode_tanggal: (META.startDate && META.endDate) ? META.startDate + " s/d " + META.endDate : "",
-    hari_ke: days.elapsed, total_hari: days.total, sisa_hari: days.left,
-    target_per_hari: Math.ceil((all.total - submitUp(all)) / Math.max(days.left, 1)),
-    n_terfilter: filtered.length,
-    jumlah_sampel: all.total,
-    status_counts: STATUS_ORDER.filter(k => (all.counts[k] || 0) > 0)
-      .map(k => ({ status: STATUS[k].label, jumlah: all.counts[k] })),
-    persen_sudah_mulai: +pctStarted(all).toFixed(1),
-    persen_submit_plus: +pctSubmit(all).toFixed(1),
-    persen_final: +pctFinal(all).toFixed(1),
-    ditolak_pengawas: all.counts.rejected || 0,
-    provinsi_total: provs.length,
-    kabkota_total: kabs.length,
-    provinsi_submit_tertinggi: byPct(provs).slice(0, 5).map(row),
-    provinsi_submit_terendah: byPct(provs).slice(-5).reverse().map(row),
-    kab_prioritas: kabs.slice().sort((a,b) => (b.total - submitUp(b)) - (a.total - submitUp(a))).slice(0, 10).map(row),
-    filter_aktif: Object.entries(state.filters || {}).filter(e => e[1]).map(e => e[0] + "=" + e[1]),
-  };
-}
-
-async function summarize(){
-  const btn = document.getElementById("aibtn"), box = document.getElementById("aisum");
-  const label = btn.textContent;
-  btn.disabled = true; btn.textContent = "Menyusun ringkasan\u2026";
-  const stats = aiStats();
-  const head = (META.name || "Progres") + " \u2022 " + periodName(CUR.pid) +
-               " \u2022 n=" + (stats.jumlah_sampel || 0).toLocaleString("id-ID");
-  box.style.display = "";
-  box.innerHTML = '<h4>Ringkasan AI</h4><div class="abody">Menghubungi Gemini\u2026</div>';
-  try {
-    const r = await fetch("api/summarize", { method:"POST",
-      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ stats: stats }) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
-    box.innerHTML = '<h4>Ringkasan AI<span class="gen">' + esc(j.model || "") + " \u2022 " + esc(head) +
-                    "</span></h4><div class=\"abody\">" + esc(j.summary) + "</div>";
-  } catch(e){
-    box.innerHTML = '<h4>Ringkasan AI</h4><div class="abody">Gagal: ' + esc(e.message) + "</div>";
-  } finally { btn.disabled = false; btn.textContent = label; }
-}
-document.getElementById("aibtn").onclick = summarize;
 /* Session modal: paste a FASIH Cookie header so the server can refresh. */
 const sessBtn = document.getElementById("setsess");
 const sessModal = document.getElementById("sessmodal");
@@ -1282,7 +1216,7 @@ cmClose.onclick = () => cmModal.style.display = "none";
 cmModal.onclick = (e) => { if (e.target === cmModal) cmModal.style.display = "none"; };
 (async () => {
   let me = null;
-  try { const r = await fetch("api/me"); if (r.ok){ me = await r.json(); BACKEND = true; AI_ON = !!me.ai; } else BACKEND = false; } catch(e){ BACKEND = false; }
+  try { const r = await fetch("api/me"); if (r.ok){ me = await r.json(); BACKEND = true; } else BACKEND = false; } catch(e){ BACKEND = false; }
   refreshVisible(); sessVisible();
   if (me && me.auth && me.auth !== "open" && me.user){
     const chip = document.getElementById("userchip");
