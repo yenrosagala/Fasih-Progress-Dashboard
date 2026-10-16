@@ -1,5 +1,6 @@
 services:
   web:
+    build: .
     image: yenrosagala/fasih-analytics:latest
     container_name: fasih-analytics
     ports:
