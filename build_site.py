@@ -14,7 +14,7 @@ import json
 import os
 import zlib
 
-from config import data_column_labels
+from config import data_column_labels_by_survey
 
 DATA_JSON = "outputs/data_sample.json"
 SURVEY_CFG = "inputs/survey_config.json"
@@ -63,11 +63,21 @@ _DEMO_CYCLE = (["final"] * 40 + ["approved"] * 20 + ["submitted"] * 15
                + ["rejected"] * 7 + ["draft"] * 8 + ["open"] * 10)
 
 
-def _columns(sample_row):
+def _labels_for(survey_name):
+    """Labels for one survey's dataN columns, or {} when none is confirmed."""
+    name = (survey_name or "").lower()
+    for probe, labels in data_column_labels_by_survey.items():
+        if probe.lower() in name:
+            return labels
+    return {}
+
+
+def _columns(sample_row, survey_name=""):
+    labels = _labels_for(survey_name)
     cols, seen = [], set()
     for key in ORDER:
         if key in sample_row:
-            label = data_column_labels.get(key) or LABELS.get(key)
+            label = labels.get(key) or LABELS.get(key)
             if not label and key.startswith("data") and key[4:].isdigit():
                 label = f"Data {key[4:]}"
             cols.append({"key": key, "label": label or key})
@@ -82,7 +92,7 @@ def _payload(sid, name, stype, rows, generated, period, demo=False):
     return {
         "id": sid, "name": name, "type": stype, "demo": demo,
         "generated": generated, "period": period,
-        "columns": _columns(rows[0]) if rows else [],
+        "columns": _columns(rows[0], name) if rows else [],
         "statusMap": STATUS_MAP,
         "submitKeys": ["submitted", "approved", "final"],
         "finalKeys": ["final"],
@@ -1139,11 +1149,13 @@ pngBtn.onclick = async () => {
 /* Share the current view as a PNG plus the AI summary over WhatsApp. The image
    is the progress tab only - the summary box is left out and travels as the
    message caption instead.
-   Where the OS offers a share sheet we hand WhatsApp the file and the caption
-   in one call. Everywhere else we open a wa.me link that already carries the
-   caption and download the PNG to attach by hand.
-   ponytail: one-tap send from any browser would need the WhatsApp Cloud API
-   (a Meta business number plus a webhook) - that is server work, not built here. */
+   A wa.me link carries text but never a file, so the caption is prefilled in
+   WhatsApp Web and the PNG downloads for you to attach by hand. The tab has to
+   open inside the click gesture: a window opened after an await is outside it
+   and the browser blocks it as a popup.
+   ponytail: one-tap send with the image already attached would need the
+   WhatsApp Cloud API (a Meta business number plus a webhook) - that is server
+   work, not built here. */
 document.getElementById("wabtn").onclick = async () => {
   const btn = document.getElementById("wabtn"), label = btn.textContent;
   const abody = (document.querySelector("#aisum .abody") || {}).textContent || "";
@@ -1151,24 +1163,17 @@ document.getElementById("wabtn").onclick = async () => {
                " \u2022 n=" + (DATA.length || 0).toLocaleString("id-ID");
   const msg = head + (abody ? "\n\n" + abody : "");
   const url = "https://wa.me/?text=" + encodeURIComponent(msg);
-  /* Route and tab have to be decided here, before the render: both probes are
-     synchronous, and a window opened after an await is no longer inside the
-     click gesture, so the browser blocks it as a popup. */
-  const canNative = !!(navigator.share && navigator.canShare &&
-                       navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] }));
-  const waWin = canNative ? null : window.open(url, "_blank");
-  if (waWin) waWin.opener = null;
-  btn.disabled = true; btn.textContent = "Menyiapkan…";
+  const waWin = window.open(url, "_blank");
+  if (!waWin) {
+    alert("WhatsApp Web tidak terbuka - izinkan pop-up untuk situs ini, lalu klik lagi.");
+    return;
+  }
+  waWin.opener = null;
+  btn.disabled = true; btn.textContent = "Menyiapkan\u2026";
   try {
     const shot = await panelPNG();
-    const file = shot ? new File([shot.blob], dlName(), { type: "image/png" }) : null;
-    if (canNative && file) {
-      try { await navigator.share({ files: [file], text: msg }); return; }
-      catch(e){ if (e && e.name === "AbortError") return; }
-    }
     if (shot) grabPNG(shot.blob);
-    if (!waWin) window.open(url, "_blank", "noopener");
-  } catch(e){ if (waWin) waWin.close(); alert("Gagal mengirim ke WhatsApp: " + e.message); }
+  } catch(e){ alert("Gagal menyiapkan gambar: " + e.message); }
   finally { btn.disabled = false; btn.textContent = label; }
 };
 

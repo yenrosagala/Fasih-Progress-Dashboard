@@ -2,7 +2,7 @@ import csv
 import json
 import os
 
-from config import data_column_labels
+from config import data_column_labels_by_survey
 
 INPUT_JSON = "outputs/data_sample.json"
 SURVEY_CSV = "outputs/csv/survey_collection_deadline_adjusted.csv"
@@ -554,11 +554,21 @@ themeBtn.onclick = () => {
 """
 
 
-def _columns(sample_row):
+def _labels_for(survey_name):
+    """Labels for one survey's dataN columns, or {} when none is confirmed."""
+    name = (survey_name or "").lower()
+    for probe, labels in data_column_labels_by_survey.items():
+        if probe.lower() in name:
+            return labels
+    return {}
+
+
+def _columns(sample_row, survey_name=""):
+    labels = _labels_for(survey_name)
     cols, seen = [], set()
     for key in ORDER:
         if key in sample_row:
-            label = data_column_labels.get(key) or LABELS.get(key)
+            label = labels.get(key) or LABELS.get(key)
             if not label and key.startswith("data") and key[4:].isdigit():
                 label = f"Data {key[4:]}"
             cols.append({"key": key, "label": label or key})
@@ -594,7 +604,7 @@ def build_dashboard(input_json=INPUT_JSON, output_html=OUTPUT_HTML):
     html = (_TEMPLATE
             .replace("__TITLE__", "Dashboard Sampel FASIH")
             .replace("__GENERATED__", blob.get("generated", ""))
-            .replace("__COLUMNS__", json.dumps(_columns(rows[0]), ensure_ascii=False).replace("</", "<\\/"))
+            .replace("__COLUMNS__", json.dumps(_columns(rows[0], rows[0].get("name", "")), ensure_ascii=False).replace("</", "<\\/"))
             .replace("__META__", json.dumps(_meta(blob), ensure_ascii=False).replace("</", "<\\/"))
             .replace("__DATA__", json.dumps(rows, ensure_ascii=False).replace("</", "<\\/")))
     os.makedirs(os.path.dirname(output_html) or ".", exist_ok=True)

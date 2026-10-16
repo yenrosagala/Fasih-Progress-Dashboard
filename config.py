@@ -39,19 +39,26 @@ report_progress_assignment_url = f"{API_BASE_URL}/analytic/api/v2/assignment/rep
 # Powers the survey "Data" tab: one row per sampled unit for a survey period.
 datatable_all_user_url = f"{API_BASE_URL}/analytic/api/v2/assignment/datatable-all-user-survey-periode"
 
-# Friendly names for the survey-specific sample columns (data1..data10) shown in
-# the data-tab dashboard. Labels are inferred from SITASI 2026 rows; unconfirmed
-# by the survey schema, so adjust here if the exact headers differ.
-data_column_labels = {
-    "data1": "Wilayah",
-    "data2": "No. Urut",
-    "data3": "Jenis",
-    "data4": "Kategori Sampel",
-    "data5": "Nama Usaha",
-    "data6": "Nama Responden",
-    "data7": "Desa",
-    "data8": "Komoditas",
-    "data9": "Komoditas Utama",
+# The FASIH data-tab endpoint returns each survey's sample columns as bare
+# positional keys (data1..data10) with no header metadata, so titles cannot be
+# scraped from the response. Map them per survey instead: the key is a
+# case-insensitive substring of the survey name, the value its labels.
+#
+# Only surveys whose headers we have confirmed belong here. Anything else shows
+# an honest "Data 1..10" rather than a label borrowed from another survey -
+# the old single shared map put names like "Desa" on columns holding a status.
+data_column_labels_by_survey = {
+    "SITASI": {
+        "data1": "Wilayah",
+        "data2": "No. Urut",
+        "data3": "Jenis",
+        "data4": "Kategori Sampel",
+        "data5": "Nama Usaha",
+        "data6": "Nama Responden",
+        "data7": "Desa",
+        "data8": "Komoditas",
+        "data9": "Komoditas Utama",
+    },
 }
 
 pemutakhiran_base_url = f"{API_BASE_URL}/assignment-general/api/assignment-region/datatable?periodeId="
