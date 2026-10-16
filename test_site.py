@@ -34,6 +34,38 @@ def counts(rows, status_map):
     return o
 
 
+def check_js():
+    """Parse the inline scripts with node when available.
+
+    A JS syntax error (e.g. a duplicate `const`) silently kills every handler,
+    so the page renders but never fetches anything. Node is optional: without
+    it this check is skipped.
+    """
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if not node:
+        print("  js: node not found, skipped")
+        return
+    with open(os.path.join(SITE, "index.html"), encoding="utf-8") as f:
+        blocks = re.findall(r"<script>(.*?)</script>", f.read(), re.S)
+    assert blocks, "no inline script in index.html"
+    for i, js in enumerate(blocks):
+        fd, path = tempfile.mkstemp(suffix=".js")
+        os.close(fd)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(js)
+            r = subprocess.run([node, "--check", path], capture_output=True, text=True)
+            assert r.returncode == 0, f"inline script {i} syntax error:\n{r.stderr}"
+        finally:
+            os.remove(path)
+    print(f"  js: {len(blocks)} inline script(s) parse")
+
+
 def main():
     build_site.build_site()
 
@@ -62,6 +94,8 @@ def main():
     assert "other" not in dc, f"demo leaked to other: {dc.get('other')}"
     assert len(dc) == 6, f"demo buckets: {sorted(dc)}"
     print(f"  demo: {dc}")
+
+    check_js()
 
     print("test_site OK")
 

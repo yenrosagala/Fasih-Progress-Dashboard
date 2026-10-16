@@ -942,11 +942,10 @@ document.getElementById("sesssave").onclick = async () => {
   } finally { btn.disabled = false; }
 };
 const cmModal = document.getElementById("chartmodal");
-const cmModal = document.getElementById("chartmodal");
 const cmClose = document.getElementById("cmclose");
 cmClose.onclick = () => cmModal.style.display = "none";
 cmModal.onclick = (e) => { if (e.target === cmModal) cmModal.style.display = "none"; };
-
+(async () => {
   let me = null;
   try { const r = await fetch("api/me"); if (r.ok){ me = await r.json(); BACKEND = true; } else BACKEND = false; } catch(e){ BACKEND = false; }
   refreshVisible(); sessVisible();
