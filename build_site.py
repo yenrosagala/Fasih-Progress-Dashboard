@@ -21,7 +21,7 @@ SURVEY_CFG = "inputs/survey_config.json"
 SITE_DIR = "outputs/site"
 
 LABELS = {
-    "name": "Survei", "codeIdentity": "Kode Identitas", "status": "Status",
+    "name": "Survei", "periode": "Periode", "codeIdentity": "Kode Identitas", "status": "Status",
     "prov": "Provinsi", "kab": "Kabupaten/Kota", "kec": "Kecamatan",
     "desa": "Desa/Kelurahan", "sls": "SLS", "petugas": "Petugas", "peran": "Peran",
     "mode": "Mode", "sumError": "Error", "sumRemark": "Remark", "sumClean": "Clean",
@@ -29,7 +29,7 @@ LABELS = {
     "latitude": "Latitude", "longitude": "Longitude",
 }
 ORDER = [
-    "name", "codeIdentity", "status", "prov", "kab", "kec", "desa", "sls",
+    "name", "periode", "codeIdentity", "status", "prov", "kab", "kec", "desa", "sls",
     "petugas", "peran", "mode", "data1", "data2", "data3", "data4", "data5",
     "data6", "data7", "data8", "data9", "data10",
     "sumError", "sumRemark", "sumClean", "done",
@@ -208,6 +208,9 @@ _SHELL = r"""<!DOCTYPE html>
   .pill{background:var(--acc);color:#04263a;border-radius:999px;padding:2px 10px;font-size:11px;font-weight:700}
   .themebtn{margin-left:auto;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:4px 12px;cursor:pointer;font-size:16px;line-height:1.4}
   .themebtn:hover{border-color:var(--acc);color:var(--acc)}
+  .hdr-actions{margin-left:auto;display:flex;gap:10px;align-items:center}
+  .hdr-actions .themebtn{margin-left:0}
+  .hdr-actions .pngbtn{margin-left:0;margin-bottom:0}
   .wrap{padding:16px 20px}
   .cards{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:130px;border-left-width:4px}
@@ -284,15 +287,31 @@ _SHELL = r"""<!DOCTYPE html>
   .dhole span{font-size:11px;color:var(--mut)}
   .notice{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;color:var(--mut)}
   .notice.err{border-color:#E5484D;color:#F0A3A6}
+  #rfov{position:fixed;inset:0;background:rgba(6,8,12,.68);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:60;padding:16px}
+  #rfov.on{display:flex}
+  .rfbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;min-width:280px;max-width:440px;box-shadow:0 12px 48px rgba(0,0,0,.5)}
+  .rfspin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;margin:0 auto 12px;animation:spin .8s linear infinite}
+  .rfbox h3{margin:0 0 2px;font-size:15px;text-align:center}
+  .rfsub{text-align:center;color:var(--mut);font-size:12px}
+  .rfsteps{list-style:none;margin:14px 0 0;padding:0;font-size:13px}
+  .rfsteps li{display:flex;gap:9px;align-items:center;padding:5px 0;color:var(--mut)}
+  .rfsteps li.done{color:var(--fg)}
+  .rfsteps li.cur{color:var(--acc);font-weight:600}
+  .rfdot{width:14px;text-align:center;flex:none}
 </style>
 </head>
 <body>
 <header>
   <h1 id="title">Dashboard Sampel FASIH</h1>
   <select id="picker" class="pick" title="Pilih survei"></select>
+  <select id="period" class="pick" title="Pilih periode" style="display:none"></select>
   <span class="pill" id="demopill" style="display:none">data contoh</span>
   <span class="gen" id="genlabel"></span>
-  <button id="theme" class="themebtn" title="Ganti tema terang/gelap">&#9728;</button>
+  <div class="hdr-actions">
+    <button id="refresh" class="pngbtn" title="Ambil ulang data survei terpilih dari FASIH" style="display:none">&#8635; Perbarui</button>
+    <button id="setsess" class="pngbtn" title="Atur sesi login FASIH untuk refresh" style="display:none">&#9881; Atur Sesi</button>
+    <button id="theme" class="themebtn" title="Ganti tema terang/gelap">&#9728;</button>
+  </div>
 </header>
 <div class="wrap">
   <div id="statusbox" class="notice">Memuat daftar survei&hellip;</div>
@@ -303,9 +322,6 @@ _SHELL = r"""<!DOCTYPE html>
       <button class="tab" data-tab="dashboard">Dashboard</button>
       <button class="tab" data-tab="progress">Progress</button>
       <span class="gen" id="shown"></span>
-      <select id="refreshpick" class="pick" title="Pilih survei yang akan diperbarui" style="display:none;min-width:170px;padding:4px 8px;font-size:12px;margin-bottom:8px"></select>
-      <button id="refresh" class="pngbtn" title="Ambil ulang data survei terpilih dari FASIH" style="display:none">&#8635; Perbarui</button>
-      <button id="setsess" class="pngbtn" title="Atur sesi login FASIH untuk refresh" style="display:none">&#9881; Atur Sesi</button>
       <button id="png" class="pngbtn" title="Unduh tampilan ini sebagai PNG (tanpa header &amp; judul tab)">&#11015; PNG</button>
     </div>
 
@@ -351,6 +367,15 @@ _SHELL = r"""<!DOCTYPE html>
     </div>
   </div>
 </div>
+<div id="rfov" role="alertdialog" aria-live="polite" aria-label="Memperbarui data">
+  <div class="rfbox">
+    <div class="rfspin"></div>
+    <h3>Memperbarui data dari FASIH</h3>
+    <div class="rfsub">Mohon tunggu, proses ini bisa beberapa menit.</div>
+    <ul class="rfsteps" id="rfsteps"></ul>
+    <div class="rfsub" id="rfdetail" style="margin:10px 0 0;display:none"></div>
+  </div>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@1/dist/html2canvas-pro.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/html2canvas-pro@1/dist/html2canvas-pro.min.js';document.head.appendChild(s);"></script>
 <script>
 /* ---------- adaptive schema: everything below is set per survey ---------- */
@@ -358,8 +383,17 @@ let COLUMNS = [], DATA = [], META = {}, LABEL = {};
 let STATUS_DEF = [], STATUS = {}, STATUS_ORDER = [], SUBMIT_KEYS = [], FINAL_KEYS = [];
 let FILTER_KEYS = [], CHARTS = [];
 let state = { q:"", page:0, pageSize:100, sort:{key:null, dir:1}, filters:{} };
+let CUR = { sid:"", pid:"" };  // current survey + period (on-demand backend flow)
 
-const PREFERRED_FILTERS = ["name","prov","kab","kec","desa","status","peran","mode","petugas","data3","data4","data9"];
+const PREFERRED_FILTERS = ["periode","name","prov","kab","kec","desa","status","peran","mode","petugas","data3","data4","data9"];
+/* Filters are derived from whatever columns a payload actually ships: any column
+   with a small set of distinct values becomes a dropdown. PREFERRED_FILTERS only
+   sets the display order; columns the scrape drops simply never appear. The cap
+   keeps identifiers, coordinates, dates and free-text (names/addresses) out —
+   they'd be one-option or thousands-of-options dropdowns. */
+const MAX_FILTER_DISTINCT = 1000;
+const NO_FILTER = new Set(["codeIdentity","latitude","longitude","dateCreated","dateModified",
+                           "prov_code","kab_code","kec_code","desa_code","sls_code"]);
 const CHART_DEFS = [
   ["status","Distribusi Status"], ["prov","Sampel per Provinsi"],
   ["kab","Sampel per Kabupaten/Kota",15], ["kec","Sampel per Kecamatan",15],
@@ -411,6 +445,24 @@ function buildCharts(){
     const getter = key === "dateCreated" ? (r => String(val(r,"dateCreated")).slice(0,10)) : (r => val(r,key));
     CHARTS.push(["ch-" + key, title, getter, top]);
   }
+}
+
+function computeFilterKeys(){
+  const kept = [];
+  for (const c of COLUMNS){
+    const k = c.key;
+    if (NO_FILTER.has(k)) continue;
+    const seen = new Set();
+    for (const r of DATA){
+      const v = val(r,k);
+      if (v !== "") seen.add(v);
+      if (seen.size > MAX_FILTER_DISTINCT) break;
+    }
+    if (seen.size >= 2 && seen.size <= MAX_FILTER_DISTINCT) kept.push({ k, n:seen.size });
+  }
+  const prio = k => { const i = PREFERRED_FILTERS.indexOf(k); return i === -1 ? 1e3 : i; };
+  kept.sort((a,b) => prio(a.k) - prio(b.k) || a.n - b.n || a.k.localeCompare(b.k));
+  return kept.map(x => x.k);
 }
 
 function matches(r, skip){
@@ -719,8 +771,7 @@ function applySurvey(s){
   SUBMIT_KEYS = s.submitKeys || ["submitted","approved","final"];
   FINAL_KEYS = s.finalKeys || ["final"];
   LABEL = {}; COLUMNS.forEach(c => LABEL[c.key] = c.label);
-  const keys = new Set(COLUMNS.map(c => c.key));
-  FILTER_KEYS = PREFERRED_FILTERS.filter(k => keys.has(k));
+  FILTER_KEYS = computeFilterKeys();
   buildCharts();
   state = { q:"", page:0, pageSize:state.pageSize || 100, sort:{key:null, dir:1}, filters:{} };
   FILTER_KEYS.forEach(k => state.filters[k] = "");
@@ -733,8 +784,6 @@ function applySurvey(s){
   if (SESSION_WARN) showNotice(SESSION_WARN, true); else box.style.display = "none";
   buildFilterUI();
   apply();
-  const rp = document.getElementById("refreshpick");
-  if (rp && Array.prototype.some.call(rp.options, o => o.value === META.id)) rp.value = META.id;
   refreshVisible();
 }
 
@@ -754,15 +803,12 @@ function pick(id){
     .catch(e => showNotice("Gagal memuat survei " + id + ": " + e.message + " (buka lewat web server, bukan file://)", true));
 }
 
-function init(){
+function initStatic(){
   fetch("surveys.json")
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(m => {
       const list = m.surveys || [];
       if (!list.length){ showNotice("Tidak ada survei pada manifest.", true); return; }
-      const rp = document.getElementById("refreshpick");
-      rp.innerHTML = list.filter(s => !s.demo).map(s =>
-        '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>").join("");
       const picker = document.getElementById("picker");
       picker.innerHTML = list.map(s =>
         '<option value="' + esc(s.id) + '">' + esc(s.name) + (s.demo ? " (contoh)" : "") +
@@ -774,6 +820,84 @@ function init(){
       pick(want);
     })
     .catch(e => showNotice("Gagal memuat surveys.json: " + e.message + " (jalankan via web server, mis. `python -m http.server` di folder site)", true));
+}
+
+/* on-demand backend flow: survey list (names only) -> pick -> periods -> pick
+   -> load cached payload, or scrape that one period on request. */
+function initBackend(){
+  const picker = document.getElementById("picker");
+  showNotice("Memuat daftar survei\u2026", false);
+  fetch("api/surveys")
+    .then(async r => {
+      if (r.status === 503){ const j = await r.json().catch(() => ({})); throw new Error(j.detail || "Sesi FASIH belum diatur di server."); }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
+    .then(d => {
+      const list = d.surveys || [];
+      if (!list.length){ showNotice("Tidak ada survei pencacahan pada akun ini.", true); return; }
+      picker.innerHTML = list.map(s => '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>").join("");
+      let want = new URLSearchParams(location.search).get("survey");
+      if (!want || !list.some(s => s.id === want)) want = list[0].id;
+      picker.onchange = () => openSurvey(picker.value);
+      openSurvey(want);
+    })
+    .catch(e => {
+      showNotice("Gagal memuat daftar survei: " + e.message, true);
+      if (/sesi/i.test(e.message)) openSess();
+    });
+}
+
+function openSurvey(sid, wantPid){
+  CUR = { sid: sid, pid: "" };
+  document.getElementById("picker").value = sid;
+  try { history.replaceState(null, "", "?survey=" + encodeURIComponent(sid)); } catch(e){}
+  document.getElementById("app").style.display = "none";
+  const periodSel = document.getElementById("period");
+  periodSel.style.display = "none";
+  showNotice("Memuat periode\u2026", false);
+  fetch("api/survey/" + encodeURIComponent(sid) + "/periods")
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(d => {
+      const periods = d.periods || [];
+      if (!periods.length){
+        showNotice("Survei ini tidak memiliki periode yang bisa diambil.", true);
+        refreshVisible();
+        return;
+      }
+      periodSel.style.display = "";
+      periodSel.innerHTML = periods.map(p =>
+        '<option value="' + esc(p.id) + '"' + (p.cached ? ' data-cached="1"' : "") + ">" +
+        esc(p.name || p.id) + (p.cached ? " \u2713" : "") + "</option>").join("");
+      let def = wantPid && periods.some(p => p.id === wantPid) ? wantPid : "";
+      if (!def){ const cached = periods.filter(p => p.cached); def = (cached[cached.length-1] || periods[periods.length-1]).id; }
+      periodSel.value = def;
+      periodSel.onchange = () => openPeriod(periodSel.value);
+      openPeriod(def);
+    })
+    .catch(e => showNotice("Gagal memuat periode: " + e.message, true));
+}
+
+function openPeriod(pid){
+  CUR.pid = pid;
+  const sel = document.getElementById("period");
+  const cur = sel.options[sel.selectedIndex];
+  const pname = (cur && cur.value === pid) ? cur.textContent.replace(/\s*\u2713$/, "") : pid;
+  document.getElementById("app").style.display = "none";
+  showNotice("Memuat data\u2026", false);
+  fetch("api/survey/" + encodeURIComponent(CUR.sid) + "/period/" + encodeURIComponent(pid) + "/data")
+    .then(r => { if (r.status === 404) return null; if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(s => {
+      refreshVisible();
+      if (!s){
+        showNotice("Belum ada data untuk periode ini (" + esc(pname) + "). Klik \u201cAmbil Data\u201d untuk mengambil dari FASIH.", false);
+        setRefresh("\u21BB Ambil Data", false);
+        return;
+      }
+      setRefresh(REFRESH_LABEL, false);
+      applySurvey(s);
+    })
+    .catch(e => { refreshVisible(); showNotice("Gagal memuat data: " + e.message, true); });
 }
 
 document.querySelectorAll(".tab").forEach(btn => {
@@ -840,33 +964,46 @@ let SESSION_WARN = "";
 const refreshBtn = document.getElementById("refresh");
 const REFRESH_LABEL = "\u21BB Perbarui";
 function refreshVisible(){
-  const show = (BACKEND && META.id && !META.demo) ? "" : "none";
+  const show = (BACKEND && (CUR.sid || (META.id && !META.demo))) ? "" : "none";
   refreshBtn.style.display = show;
-  document.getElementById("refreshpick").style.display = show;
 }
 function setRefresh(t, off){ refreshBtn.classList.toggle("busy", !!off); refreshBtn.textContent = t; refreshBtn.disabled = !!off; }
+const rfov = document.getElementById("rfov");
+const rfstepsEl = document.getElementById("rfsteps");
+const rfdetailEl = document.getElementById("rfdetail");
+function showOv(v){ rfov.classList.toggle("on", !!v); }
+function renderSteps(st){
+  const steps = (st && st.steps) || [];
+  rfstepsEl.innerHTML = steps.map(s => {
+    const mark = s.done ? "\u2713" : (s.current ? "\u25CF" : "\u25CB");
+    return '<li class="' + (s.done ? "done" : (s.current ? "cur" : "")) + '"><span class="rfdot">' + mark + '</span><span>' + esc(s.label) + '</span></li>';
+  }).join("");
+  const d = (st && st.detail) || "";
+  rfdetailEl.textContent = d;
+  rfdetailEl.style.display = d ? "" : "none";
+}
 refreshBtn.onclick = async () => {
-  const rp = document.getElementById("refreshpick");
-  const id = (rp && rp.value) || META.id;
-  if (!id) return;
-  rp.disabled = true;
+  const sid = CUR.sid, pid = CUR.pid;
+  if (!sid || !pid) return;
+  const q = "api/survey/" + encodeURIComponent(sid) + "/period/" + encodeURIComponent(pid);
   setRefresh("Mengantre\u2026", true);
+  showOv(true); renderSteps({ detail: "Mengirim permintaan ke server\u2026" });
   try {
-    const r = await fetch("api/survey/" + encodeURIComponent(id) + "/refresh", { method:"POST" });
+    const r = await fetch(q + "/scrape", { method:"POST" });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    for (let i = 0; i < 1200; i++){
+    for (let i = 0; i < 2400; i++){
       await new Promise(res => setTimeout(res, 3000));
-      const st = await (await fetch("api/survey/" + encodeURIComponent(id) + "/status")).json();
-      if (st.state === "queued") setRefresh("Menunggu\u2026", true);
-      else if (st.state === "running") setRefresh("Memperbarui\u2026", true);
-      else if (st.state === "done"){ setRefresh(REFRESH_LABEL, false); rp.disabled = false; document.getElementById("genlabel").textContent = "Diperbarui: " + (st.generated || "-"); init(); return; }
-      else if (st.state === "error"){ setRefresh(REFRESH_LABEL, false); rp.disabled = false; showNotice("Gagal memperbarui: " + (st.error || "?"), true); return; }
+      const st = await (await fetch(q + "/status")).json();
+      if (st.state === "queued"){ setRefresh("Menunggu\u2026", true); renderSteps({ steps:[{label:"Menunggu antrean server\u2026", current:true}] }); }
+      else if (st.state === "running"){ setRefresh("Mengambil\u2026", true); renderSteps(st); }
+      else if (st.state === "done"){ setRefresh(REFRESH_LABEL, false); showOv(false); openSurvey(sid, pid); return; }
+      else if (st.state === "error"){ setRefresh(REFRESH_LABEL, false); showOv(false); showNotice("Gagal mengambil data: " + (st.error || "?"), true); return; }
     }
-    setRefresh(REFRESH_LABEL, false); rp.disabled = false;
-    showNotice("Refresh masih berjalan di server; muat ulang halaman nanti.", false);
+    setRefresh(REFRESH_LABEL, false); showOv(false);
+    showNotice("Pengambilan masih berjalan di server; muat ulang halaman nanti.", false);
   } catch(e){
-    setRefresh(REFRESH_LABEL, false); rp.disabled = false;
-    showNotice("Gagal memperbarui: " + e.message + " (butuh backend server.py)", true);
+    setRefresh(REFRESH_LABEL, false); showOv(false);
+    showNotice("Gagal mengambil data: " + e.message, true);
   }
 };
 /* Session modal: paste a FASIH Cookie header so the server can refresh. */
@@ -893,9 +1030,9 @@ document.getElementById("sesssave").onclick = async () => {
     if (j.valid){
       SESSION_WARN = ""; setRefresh(REFRESH_LABEL, false);
       document.getElementById("statusbox").style.display = "none";
-      sessMsg.className = "modalmsg ok"; sessMsg.textContent = "Sesi tersimpan & valid. Tombol \u201cPerbarui\u201d sudah aktif.";
+      sessMsg.className = "modalmsg ok"; sessMsg.textContent = "Sesi tersimpan & valid. Memuat daftar survei\u2026";
       sessInput.value = "";
-      setTimeout(closeSess, 900);
+      setTimeout(() => { closeSess(); initBackend(); }, 900);
     } else {
       sessMsg.className = "modalmsg err"; sessMsg.textContent = "Sesi tersimpan tapi belum valid/kedaluwarsa. Salin ulang header Cookie dari FASIH.";
     }
@@ -907,18 +1044,21 @@ document.getElementById("sesssave").onclick = async () => {
   try { const r = await fetch("api/me"); BACKEND = r.ok; } catch(e){ BACKEND = false; }
   refreshVisible(); sessVisible();
   if (BACKEND) {
+    let firstVisit = false;
+    try { firstVisit = !localStorage.getItem("fasih-setup-seen"); } catch(e){}
+    if (firstVisit){ try { localStorage.setItem("fasih-setup-seen", "1"); } catch(e){} openSess(); }
     try {
       const s = await (await fetch("api/session")).json();
       if (!s.configured){
-        SESSION_WARN = "Sesi FASIH belum diatur di server, jadi tombol \u201cPerbarui\u201d akan gagal. Klik \u201cAtur Sesi\u201d untuk menempel sesi dari browser.";
-        setRefresh(REFRESH_LABEL, true);
+        SESSION_WARN = "Sesi FASIH belum diatur di server. Klik \u201cAtur Sesi\u201d untuk menempel sesi dari browser sebelum daftar survei bisa dimuat.";
         showNotice(SESSION_WARN, true);
       }
     } catch(e){}
+    initBackend();
+  } else {
+    initStatic();
   }
 })();
-
-init();
 </script>
 </body>
 </html>

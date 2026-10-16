@@ -126,10 +126,153 @@ def test_manual_session():
     print("manual session: ok")
 
 
+def test_steps():
+    sid = "steps-test"
+    server._stage(sid, 0)
+    job = server._jobs[sid]
+    assert len(job["steps"]) == len(server.REFRESH_STEPS) == 6
+    assert job["steps"][0]["current"] and not job["steps"][0]["done"]
+    assert all(not s["done"] for s in job["steps"])
+
+    server._stage(sid, 3, "2/5 wilayah")
+    job = server._jobs[sid]
+    assert all(s["done"] for s in job["steps"][:3]), "earlier steps marked done"
+    assert job["steps"][3]["current"] and not job["steps"][3]["done"]
+    assert all(not s["done"] and not s["current"] for s in job["steps"][4:])
+    assert job["detail"] == "2/5 wilayah"
+
+    with TestClient(server.app) as c:
+        assert c.get(f"/api/survey/{sid}/status").json()["detail"] == "2/5 wilayah"
+    print("steps: ok")
+
+
+def test_periods():
+    import asyncio
+
+    import build_site
+    import data_tab
+
+    row = {"codeIdentity": "C1", "data1": "x",
+           "region": {"level1": {"fullCode": "11", "name": "P1"}}}
+    rec = data_tab.flatten_row(row, "S", "2026 - Triwulan 1")
+    assert rec["periode"] == "2026 - Triwulan 1", rec
+    assert rec["data1"] == "x" and rec["prov"] == "P1", rec
+
+    cols = {c["key"]: c["label"] for c in build_site._columns({"name": "S", "periode": "P", "codeIdentity": "C"})}
+    assert cols.get("periode") == "Periode", cols
+
+    class _Resp:
+        def __init__(self, data):
+            self._d = data
+
+        def json(self):
+            return {"data": self._d}
+
+    async def fake_get(url, headers, cookies, params=None):
+        return _Resp([
+            {"id": "b", "name": "T2", "startDate": "2026-02-01"},
+            {"id": "a", "name": "T1", "startDate": "2026-01-01"},
+            {"id": 123, "name": "bad"},
+        ])
+
+    async def fail_get(url, headers, cookies, params=None):
+        raise RuntimeError("boom")
+
+    orig = data_tab._get
+    try:
+        data_tab._get = fake_get
+        got = asyncio.run(data_tab._survey_periods("SURVEY", {}, {}))
+        assert [p["id"] for p in got] == ["a", "b"], got  # oldest first, non-str id dropped
+
+        data_tab._get = fail_get
+        assert asyncio.run(data_tab._survey_periods("SURVEY", {}, {})) == [], "lookup failure -> fall back"
+        assert asyncio.run(data_tab._survey_periods("", {}, {})) == []
+    finally:
+        data_tab._get = orig
+    print("periods: ok")
+
+
+def test_on_demand():
+    """Survey list -> periods -> single-period scrape/status/data, network stubbed."""
+    import asyncio
+    import tempfile
+
+    import data_tab
+
+    class _Resp:
+        def __init__(self, d): self._d = d
+
+        def json(self): return self._d
+
+    async def fake_post(url, headers, cookies, payload):
+        return _Resp({"data": {"content": [
+            {"id": "S1", "name": "Survei Satu"},
+            {"id": "S2", "name": "Survei Dua"},
+            {"name": "no-id"},
+        ]}})
+
+    async def fake_periods(sid, headers, cookies):
+        return [{"id": "P1", "name": "TW1", "startDate": "2026-01-01", "endDate": "2026-03-31"}]
+
+    calls = []
+
+    async def stub_period(sid, pid, key):
+        await asyncio.sleep(0.02)
+        server._stage(key, 0)
+        server._stage(key, len(server.PERIOD_STEPS), "5 baris")
+        calls.append((sid, pid))
+        return 5, "20260101_000000"
+
+    tmp = tempfile.mkdtemp()
+    os.makedirs(os.path.join(tmp, "data"), exist_ok=True)
+    with open(os.path.join(tmp, "data", "P1.json"), "w", encoding="utf-8") as f:
+        json.dump({"id": "P1", "name": "Survei Satu", "rows": [1, 2]}, f)
+
+    orig = (server.post_requests, server._session_headers, data_tab._survey_periods,
+            server._refresh_period, server.SITE_DIR)
+    try:
+        server.post_requests = fake_post
+        server._session_headers = lambda: ({}, {})
+        data_tab._survey_periods = fake_periods
+        server._refresh_period = stub_period
+        server.SITE_DIR = tmp
+
+        with TestClient(server.app) as c:
+            assert c.get("/api/surveys").json()["surveys"] == [
+                {"id": "S1", "name": "Survei Satu"}, {"id": "S2", "name": "Survei Dua"}]
+
+            per = c.get("/api/survey/S1/periods").json()["periods"]
+            assert per == [{"id": "P1", "name": "TW1", "startDate": "2026-01-01",
+                            "endDate": "2026-03-31", "cached": True}], per
+
+            assert c.get("/api/survey/S1/period/P1/data").status_code == 200
+            assert c.get("/api/survey/S1/period/PX/data").status_code == 404
+            assert c.get("/api/survey/S1/period/P1/status").json()["state"] == "idle"
+
+            assert c.post("/api/survey/S1/period/P1/scrape").json()["status"] == "queued"
+            st = {}
+            for _ in range(100):
+                st = c.get("/api/survey/S1/period/P1/status").json()
+                if st["state"] in ("done", "error"):
+                    break
+                time.sleep(0.03)
+            assert st["state"] == "done" and st["rows"] == 5, st
+            assert calls == [("S1", "P1")], "worker must run exactly the queued period"
+            assert len(st["steps"]) == len(server.PERIOD_STEPS) == 3, st
+            assert st["steps"][-1]["done"] is True
+    finally:
+        (server.post_requests, server._session_headers, data_tab._survey_periods,
+         server._refresh_period, server.SITE_DIR) = orig
+    print("on-demand: ok")
+
+
 if __name__ == "__main__":
     test_cookie()
     test_manifest()
     test_api()
     test_env_session()
     test_manual_session()
+    test_steps()
+    test_periods()
+    test_on_demand()
     print("test_server OK")

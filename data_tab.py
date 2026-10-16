@@ -11,6 +11,7 @@ from config import (
     myinfo_url,
     region_level1_url,
     region_level2_url,
+    survey_periods_url,
 )
 from importer import get_cookies_and_csrf
 
@@ -54,13 +55,20 @@ class _RateLimiter:
                 await asyncio.sleep(self.period - (now - self._times[0]) + 0.5)
 
 
+def _ensure_limiter():
+    global _limiter
+    if _limiter is None:
+        _limiter = _RateLimiter(RATE_MAX_CALLS, RATE_PERIOD)
+    return _limiter
+
+
 async def _get(url, headers, cookies):
-    await _limiter.acquire()
+    await _ensure_limiter().acquire()
     return await get_requests(url, headers, cookies)
 
 
 async def _post(url, headers, cookies, payload):
-    await _limiter.acquire()
+    await _ensure_limiter().acquire()
     return await post_requests(url, headers, cookies, payload)
 
 
@@ -95,7 +103,7 @@ def _region_levels(region):
     return levels
 
 
-def flatten_row(row, survey_name):
+def flatten_row(row, survey_name, period_name=""):
     lv = _region_levels(row.get("region") or {})
 
     def g(i, key):
@@ -103,6 +111,7 @@ def flatten_row(row, survey_name):
 
     rec = {
         "name": survey_name,
+        "periode": period_name,
         "codeIdentity": row.get("codeIdentity"),
         "status": row.get("assignmentStatusAlias"),
         "petugas": row.get("currentUserFullname"),
@@ -122,13 +131,14 @@ def flatten_row(row, survey_name):
         "latitude": row.get("latitude"),
         "longitude": row.get("longitude"),
     }
-    for i in range(1, 11):
-        rec[f"data{i}"] = row.get(f"data{i}")
+    for k in row:
+        if k.startswith("data") and k[4:].isdigit():
+            rec[k] = row.get(k)
     return rec
 
 
 async def _collect_partition(survey_name, survey_period_id, region1_id, region2_id, label,
-                             headers, cookies, semaphore, seen):
+                             headers, cookies, semaphore, seen, period_name=""):
     async with semaphore:
         records, start, total = [], 0, 0
         while True:
@@ -140,7 +150,7 @@ async def _collect_partition(survey_name, survey_period_id, region1_id, region2_
                 rid = r.get("id")
                 if rid not in seen:
                     seen.add(rid)
-                    records.append(flatten_row(r, survey_name))
+                    records.append(flatten_row(r, survey_name, period_name))
             start += len(batch)
             if not batch or start >= total or start >= MAX_WINDOW:
                 break
@@ -149,7 +159,8 @@ async def _collect_partition(survey_name, survey_period_id, region1_id, region2_
         return records
 
 
-async def _collect_one(survey_name, survey_period_id, region_group_id, headers, cookies, semaphore, seen):
+async def _collect_one(survey_name, survey_period_id, region_group_id, headers, cookies, semaphore, seen,
+                       progress=None, period_name=""):
     myinfo = (await _get(myinfo_url + survey_period_id, headers, cookies)).json().get("data", {})
     prov_codes = myinfo.get("regionId") or []
     lv1 = (await _get(region_level1_url + region_group_id, headers, cookies)).json().get("data", [])
@@ -166,33 +177,77 @@ async def _collect_one(survey_name, survey_period_id, region_group_id, headers, 
             for kab in kab_list:
                 label = f"{prov.get('name')} / {kab.get('name')}"
                 tasks.append(_collect_partition(survey_name, survey_period_id, prov["id"], kab["id"],
-                                                label, headers, cookies, semaphore, seen))
+                                                label, headers, cookies, semaphore, seen, period_name))
         else:
             tasks.append(_collect_partition(survey_name, survey_period_id, prov["id"], None,
-                                            prov.get("name"), headers, cookies, semaphore, seen))
+                                            prov.get("name"), headers, cookies, semaphore, seen, period_name))
 
-    results = await asyncio.gather(*tasks)
+    total = len(tasks)
+    done = 0
+
+    async def _run(coro):
+        nonlocal done
+        try:
+            return await coro
+        finally:
+            done += 1
+            if progress:
+                progress(done, total)
+
+    results = await asyncio.gather(*[_run(t) for t in tasks])
     records = [rec for lst in results for rec in lst]
     print(f"  data-tab | {survey_name}: {len(records)} rows")
     return records
 
 
-async def collect_data_tab(survey_collection_df, names, headers, cookies):
-    global _limiter
-    _limiter = _RateLimiter(RATE_MAX_CALLS, RATE_PERIOD)
+async def _survey_periods(survey_id, headers, cookies):
+    """All periods for a survey (name + id), oldest first. Empty if lookup fails."""
+    if not isinstance(survey_id, str) or not survey_id:
+        return []
+    try:
+        data = (await _get(survey_periods_url + survey_id, headers, cookies)).json().get("data") or []
+    except Exception as e:
+        print(f"    WARN periods lookup failed for {survey_id}: {e}")
+        return []
+    data = [p for p in data if isinstance(p.get("id"), str)]
+    data.sort(key=lambda p: (p.get("startDate") or "", p.get("name") or ""))
+    return data
+
+
+async def collect_data_tab(survey_collection_df, names, headers, cookies, progress=None):
+    _ensure_limiter()
     semaphore = asyncio.Semaphore(int(os.getenv("FASIH_DATA_TAB_CONCURRENCY", "3")))
     seen = set()
     frames = []
     for _, s in survey_collection_df.iterrows():
         if s["name"] not in names:
             continue
-        spid, gid = s.get("survey_period_id"), s.get("regionGroupId")
-        if not isinstance(spid, str) or not isinstance(gid, str):
+        gid = s.get("regionGroupId")
+        if not isinstance(gid, str):
             continue
-        records = await _collect_one(s["name"], spid, gid, headers, cookies, semaphore, seen)
-        if records:
-            frames.append(pd.DataFrame(records))
+        # Scrape every period the survey has (a survey can span Triwulan/Month
+        # periods); each row is tagged with its period name so it shows as a filter.
+        periods = await _survey_periods(s.get("id"), headers, cookies)
+        if not periods:
+            spid = s.get("survey_period_id")
+            periods = [{"id": spid, "name": ""}] if isinstance(spid, str) else []
+        for p in periods:
+            records = await _collect_one(s["name"], p["id"], gid, headers, cookies, semaphore, seen,
+                                         progress, period_name=p.get("name") or "")
+            if records:
+                frames.append(pd.DataFrame(records))
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+async def collect_period(survey_name, survey_period_id, region_group_id, headers, cookies,
+                         period_name="", progress=None):
+    """Scrape a single survey period on demand (the server's picker flow)."""
+    _ensure_limiter()
+    semaphore = asyncio.Semaphore(int(os.getenv("FASIH_DATA_TAB_CONCURRENCY", "3")))
+    seen = set()
+    records = await _collect_one(survey_name, survey_period_id, region_group_id, headers, cookies,
+                                 semaphore, seen, progress, period_name=period_name)
+    return pd.DataFrame(records) if records else pd.DataFrame()
 
 
 def save_data_tab(df):

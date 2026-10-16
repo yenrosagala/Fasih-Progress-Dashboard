@@ -12,6 +12,8 @@ __pycache__
 
 # --- large local artifacts (rebuilt/refetched; not needed to serve) ---
 outputs/data_sample.json
+# per-survey payloads contain real sample PII - served from the mounted volume, never baked
+outputs/site/data/
 outputs/pivot_report.xlsx
 outputs/csv/data_sample*.csv
 outputs/csv/report_*.csv
@@ -33,5 +35,7 @@ test_site.py
 
 # NOTE: keep these in the image — required at runtime:
 #   inputs/survey_config.json
-#   outputs/site/**
+#   outputs/site/index.html
+#   outputs/site/surveys.json
 #   outputs/csv/survey_collection_deadline_adjusted.csv
+# (outputs/site/data/ is excluded — contains PII; provided by the mounted volume)
