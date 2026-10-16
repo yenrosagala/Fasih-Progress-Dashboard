@@ -15,13 +15,13 @@ _TEST_PAYLOAD = {"pageNumber": 0, "pageSize": 1, "sortBy": "CREATED_AT", "sortDi
 
 def _save_session(cookies_dict, csrf_token):
     os.makedirs("inputs", exist_ok=True)
-    with open(COOKIE_CACHE_PATH, "w") as f:
+    with open(COOKIE_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump({"cookies": cookies_dict, "csrf_token": csrf_token}, f)
 
 
 def _load_session():
     if os.path.exists(COOKIE_CACHE_PATH):
-        with open(COOKIE_CACHE_PATH) as f:
+        with open(COOKIE_CACHE_PATH, encoding="utf-8") as f:
             data = json.load(f)
         return data.get("cookies"), data.get("csrf_token")
     return None, None
@@ -74,7 +74,7 @@ def save_manual_session(cookie_header):
     if csrf_token:
         payload["csrf_token"] = csrf_token
     os.makedirs("inputs", exist_ok=True)
-    with open(MANUAL_SESSION_PATH, "w") as f:
+    with open(MANUAL_SESSION_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     return cookies, csrf_token
 
@@ -83,7 +83,7 @@ def _load_manual_session():
     if not os.path.exists(MANUAL_SESSION_PATH):
         return None, None
 
-    with open(MANUAL_SESSION_PATH) as f:
+    with open(MANUAL_SESSION_PATH, encoding="utf-8") as f:
         return _parse_session_blob(json.load(f))
 
 

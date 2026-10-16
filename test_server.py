@@ -96,12 +96,13 @@ def test_manual_session():
     os.close(fd)
     importer.MANUAL_SESSION_PATH = path
     try:
-        cookies, csrf = importer.save_manual_session("x-xsrf-token=tok; SEMAR=abc=def; other=1")
-        assert cookies == {"x-xsrf-token": "tok", "SEMAR": "abc=def", "other": "1"}, cookies
+        cookies, csrf = importer.save_manual_session("x-xsrf-token=tok; SEMAR=abc=def; other=1; note=ar\u2192ow")
+        assert cookies == {"x-xsrf-token": "tok", "SEMAR": "abc=def", "other": "1", "note": "ar\u2192ow"}, cookies
         assert csrf == "tok", csrf
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert data["csrf_token"] == "tok" and data["cookie_header"].startswith("x-xsrf-token=")
+        assert data["cookies"]["note"] == "ar\u2192ow", "non-cp1252 char must survive round-trip"
 
         os.environ.pop("FASIH_SESSION", None)
         assert importer.load_session() == (cookies, csrf), "saved session must load back"
