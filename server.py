@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 import build_site
 import data_tab
 from config import BASE_HEADERS
-from importer import load_session, session_valid
+from importer import load_session, save_manual_session, session_valid
 
 SITE_DIR = build_site.SITE_DIR
 SURVEY_CSV = "outputs/csv/survey_collection_deadline_adjusted.csv"
@@ -168,6 +168,20 @@ async def me(request: Request):
 async def api_session():
     cookies, csrf = load_session()
     return {"configured": bool(cookies and csrf)}
+
+
+@app.post("/api/session")
+async def set_session(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    header = (body or {}).get("cookie_header", "")
+    try:
+        cookies, csrf = save_manual_session(header)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"configured": True, "valid": bool(session_valid(cookies, csrf))}
 
 
 @app.post("/api/survey/{sid}/refresh")

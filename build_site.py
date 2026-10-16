@@ -226,6 +226,18 @@ _SHELL = r"""<!DOCTYPE html>
   .pngbtn{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:5px 12px;cursor:pointer;font:inherit;font-weight:600;font-size:12px;margin-left:10px;margin-bottom:8px}
   .pngbtn:hover{border-color:var(--acc);color:var(--acc)}
   .pngbtn:disabled{opacity:.6;cursor:default}
+  .pngbtn.busy::after{content:"";display:inline-block;width:.72em;height:.72em;margin-left:.45em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-1px;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modalbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:560px;width:100%;max-height:90vh;overflow:auto}
+  .modalbox h3{margin:0 0 8px;font-size:16px}
+  .modalbox ol{margin:8px 0;padding-left:20px;font-size:12px;color:var(--mut)}
+  .modalbox ol b{color:var(--fg)}
+  .modalbox textarea{width:100%;min-height:110px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.4 ui-monospace,Consolas,monospace;resize:vertical}
+  .modalmsg{min-height:18px;font-size:12px;margin:6px 0}
+  .modalmsg.ok{color:#5CB887}
+  .modalmsg.err{color:#E5484D}
+  .modalfoot{display:flex;gap:8px;justify-content:flex-end}
   .panel{display:none}
   .panel.active{display:block}
   .tblwrap{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:10px}
@@ -291,7 +303,9 @@ _SHELL = r"""<!DOCTYPE html>
       <button class="tab" data-tab="dashboard">Dashboard</button>
       <button class="tab" data-tab="progress">Progress</button>
       <span class="gen" id="shown"></span>
-      <button id="refresh" class="pngbtn" title="Ambil ulang data dari FASIH" style="display:none">&#8635; Perbarui</button>
+      <select id="refreshpick" class="pick" title="Pilih survei yang akan diperbarui" style="display:none;min-width:170px;padding:4px 8px;font-size:12px;margin-bottom:8px"></select>
+      <button id="refresh" class="pngbtn" title="Ambil ulang data survei terpilih dari FASIH" style="display:none">&#8635; Perbarui</button>
+      <button id="setsess" class="pngbtn" title="Atur sesi login FASIH untuk refresh" style="display:none">&#9881; Atur Sesi</button>
       <button id="png" class="pngbtn" title="Unduh tampilan ini sebagai PNG (tanpa header &amp; judul tab)">&#11015; PNG</button>
     </div>
 
@@ -317,6 +331,24 @@ _SHELL = r"""<!DOCTYPE html>
       <div class="cards" id="pkpi"></div>
       <div class="grid" id="progressgrid"></div>
     </section>
+  </div>
+</div>
+<div id="sessmodal" class="modal" style="display:none">
+  <div class="modalbox" role="dialog" aria-modal="true" aria-label="Atur sesi FASIH">
+    <h3>Atur Sesi FASIH</h3>
+    <p class="gen">Sesi ini disimpan di server dan dipakai tombol &ldquo;Perbarui&rdquo;. Tidak perlu mengubah file di server.</p>
+    <ol>
+      <li>Buka <b>fasih.bps.go.id</b> dan login di browser.</li>
+      <li>Tekan <b>F12</b> &rarr; tab <b>Network</b> &rarr; muat ulang halaman.</li>
+      <li>Klik permintaan mana pun &rarr; <b>Request Headers</b> &rarr; cari <b>Cookie</b>.</li>
+      <li>Klik kanan nilainya &rarr; <b>Copy value</b>, lalu tempel di kotak bawah.</li>
+    </ol>
+    <textarea id="sessinput" spellcheck="false" placeholder="Tempel nilai header Cookie di sini..."></textarea>
+    <div class="modalmsg" id="sessmsg"></div>
+    <div class="modalfoot">
+      <button id="sesscancel" class="pngbtn">Batal</button>
+      <button id="sesssave" class="pngbtn">Simpan</button>
+    </div>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@1/dist/html2canvas-pro.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/html2canvas-pro@1/dist/html2canvas-pro.min.js';document.head.appendChild(s);"></script>
@@ -701,6 +733,8 @@ function applySurvey(s){
   if (SESSION_WARN) showNotice(SESSION_WARN, true); else box.style.display = "none";
   buildFilterUI();
   apply();
+  const rp = document.getElementById("refreshpick");
+  if (rp && Array.prototype.some.call(rp.options, o => o.value === META.id)) rp.value = META.id;
   refreshVisible();
 }
 
@@ -726,6 +760,9 @@ function init(){
     .then(m => {
       const list = m.surveys || [];
       if (!list.length){ showNotice("Tidak ada survei pada manifest.", true); return; }
+      const rp = document.getElementById("refreshpick");
+      rp.innerHTML = list.filter(s => !s.demo).map(s =>
+        '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>").join("");
       const picker = document.getElementById("picker");
       picker.innerHTML = list.map(s =>
         '<option value="' + esc(s.id) + '">' + esc(s.name) + (s.demo ? " (contoh)" : "") +
@@ -802,11 +839,17 @@ let BACKEND = false;
 let SESSION_WARN = "";
 const refreshBtn = document.getElementById("refresh");
 const REFRESH_LABEL = "\u21BB Perbarui";
-function refreshVisible(){ refreshBtn.style.display = (BACKEND && META.id && !META.demo) ? "" : "none"; }
-function setRefresh(t, off){ refreshBtn.textContent = t; refreshBtn.disabled = !!off; }
+function refreshVisible(){
+  const show = (BACKEND && META.id && !META.demo) ? "" : "none";
+  refreshBtn.style.display = show;
+  document.getElementById("refreshpick").style.display = show;
+}
+function setRefresh(t, off){ refreshBtn.classList.toggle("busy", !!off); refreshBtn.textContent = t; refreshBtn.disabled = !!off; }
 refreshBtn.onclick = async () => {
-  const id = META.id;
+  const rp = document.getElementById("refreshpick");
+  const id = (rp && rp.value) || META.id;
   if (!id) return;
+  rp.disabled = true;
   setRefresh("Mengantre\u2026", true);
   try {
     const r = await fetch("api/survey/" + encodeURIComponent(id) + "/refresh", { method:"POST" });
@@ -816,24 +859,58 @@ refreshBtn.onclick = async () => {
       const st = await (await fetch("api/survey/" + encodeURIComponent(id) + "/status")).json();
       if (st.state === "queued") setRefresh("Menunggu\u2026", true);
       else if (st.state === "running") setRefresh("Memperbarui\u2026", true);
-      else if (st.state === "done"){ setRefresh(REFRESH_LABEL, false); document.getElementById("genlabel").textContent = "Diperbarui: " + (st.generated || "-"); pick(id); return; }
-      else if (st.state === "error"){ setRefresh(REFRESH_LABEL, false); showNotice("Gagal memperbarui: " + (st.error || "?"), true); return; }
+      else if (st.state === "done"){ setRefresh(REFRESH_LABEL, false); rp.disabled = false; document.getElementById("genlabel").textContent = "Diperbarui: " + (st.generated || "-"); init(); return; }
+      else if (st.state === "error"){ setRefresh(REFRESH_LABEL, false); rp.disabled = false; showNotice("Gagal memperbarui: " + (st.error || "?"), true); return; }
     }
-    setRefresh(REFRESH_LABEL, false);
+    setRefresh(REFRESH_LABEL, false); rp.disabled = false;
     showNotice("Refresh masih berjalan di server; muat ulang halaman nanti.", false);
   } catch(e){
-    setRefresh(REFRESH_LABEL, false);
+    setRefresh(REFRESH_LABEL, false); rp.disabled = false;
     showNotice("Gagal memperbarui: " + e.message + " (butuh backend server.py)", true);
   }
 };
+/* Session modal: paste a FASIH Cookie header so the server can refresh. */
+const sessBtn = document.getElementById("setsess");
+const sessModal = document.getElementById("sessmodal");
+const sessInput = document.getElementById("sessinput");
+const sessMsg = document.getElementById("sessmsg");
+function openSess(){ sessMsg.textContent = ""; sessMsg.className = "modalmsg"; sessModal.style.display = "flex"; sessInput.focus(); }
+function closeSess(){ sessModal.style.display = "none"; }
+function sessVisible(){ sessBtn.style.display = BACKEND ? "" : "none"; }
+sessBtn.onclick = openSess;
+document.getElementById("sesscancel").onclick = closeSess;
+sessModal.onclick = e => { if (e.target === sessModal) closeSess(); };
+document.addEventListener("keydown", e => { if (e.key === "Escape" && sessModal.style.display === "flex") closeSess(); });
+document.getElementById("sesssave").onclick = async () => {
+  const v = sessInput.value.trim();
+  const btn = document.getElementById("sesssave");
+  if (!v){ sessMsg.className = "modalmsg err"; sessMsg.textContent = "Tempel header Cookie dulu."; return; }
+  btn.disabled = true; sessMsg.className = "modalmsg"; sessMsg.textContent = "Menyimpan & memeriksa\u2026";
+  try {
+    const r = await fetch("api/session", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ cookie_header: v }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || j.error || ("HTTP " + r.status));
+    if (j.valid){
+      SESSION_WARN = ""; setRefresh(REFRESH_LABEL, false);
+      document.getElementById("statusbox").style.display = "none";
+      sessMsg.className = "modalmsg ok"; sessMsg.textContent = "Sesi tersimpan & valid. Tombol \u201cPerbarui\u201d sudah aktif.";
+      sessInput.value = "";
+      setTimeout(closeSess, 900);
+    } else {
+      sessMsg.className = "modalmsg err"; sessMsg.textContent = "Sesi tersimpan tapi belum valid/kedaluwarsa. Salin ulang header Cookie dari FASIH.";
+    }
+  } catch(e){
+    sessMsg.className = "modalmsg err"; sessMsg.textContent = "Gagal menyimpan: " + e.message;
+  } finally { btn.disabled = false; }
+};
 (async () => {
   try { const r = await fetch("api/me"); BACKEND = r.ok; } catch(e){ BACKEND = false; }
-  refreshVisible();
+  refreshVisible(); sessVisible();
   if (BACKEND) {
     try {
       const s = await (await fetch("api/session")).json();
       if (!s.configured){
-        SESSION_WARN = "Sesi FASIH belum diatur di server, jadi tombol \u201cPerbarui\u201d akan gagal. Isi inputs/manual_session.json atau variabel FASIH_SESSION, lalu mulai ulang server.";
+        SESSION_WARN = "Sesi FASIH belum diatur di server, jadi tombol \u201cPerbarui\u201d akan gagal. Klik \u201cAtur Sesi\u201d untuk menempel sesi dari browser.";
         setRefresh(REFRESH_LABEL, true);
         showNotice(SESSION_WARN, true);
       }

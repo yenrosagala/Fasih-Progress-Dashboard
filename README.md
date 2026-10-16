@@ -151,5 +151,6 @@ Image hanya memasang `requirements-server.txt` (runtime server). `requirements.t
 
 - **Satu proses saja.** Queue refresh disimpan di memori; jangan pakai banyak worker/replica.
 - **Persistensi.** Hasil refresh ditulis ke `outputs/site/`; pada filesystem ephemeral hilang saat restart (site asli tetap ada di image). Untuk menyimpan, mount volume ke `/app/outputs`.
-- **Sesi FASIH.** Tidak ikut ke image dan cepat kedaluwarsa. Setel `FASIH_SESSION` (atau mount `inputs/manual_session.json`) dan perbarui berkala.
+- **Sesi FASIH.** Tidak ikut ke image dan cepat kedaluwarsa. Ada dua cara menyetel: (1) dari **UI** — buka dashboard, klik **Atur Sesi**, tempel header `Cookie` dari FASIH (ada instruksi di dialognya) — sesi disimpan ke `inputs/manual_session.json` di server dan langsung dipakai tanpa restart; (2) dari **server** — setel `FASIH_SESSION` (atau mount `inputs/manual_session.json`) lalu restart. Perbarui berkala saat kedaluwarsa (banner di dashboard akan mengingatkan).
+- **Ephemeral & sesi dari UI.** Pada filesystem ephemeral (tanpa volume), sesi yang diset lewat UI juga hilang saat container restart; setel ulang lewat UI atau pakai `FASIH_SESSION` agar permanen.
 - Mendukung Fly.io, Render, Railway, dan VPS — arahkan ke Dockerfile ini.

@@ -86,9 +86,49 @@ def test_env_session():
     print("env session: ok")
 
 
+def test_manual_session():
+    import tempfile
+
+    import importer
+
+    orig = importer.MANUAL_SESSION_PATH
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    importer.MANUAL_SESSION_PATH = path
+    try:
+        cookies, csrf = importer.save_manual_session("x-xsrf-token=tok; SEMAR=abc=def; other=1")
+        assert cookies == {"x-xsrf-token": "tok", "SEMAR": "abc=def", "other": "1"}, cookies
+        assert csrf == "tok", csrf
+        with open(path) as f:
+            data = json.load(f)
+        assert data["csrf_token"] == "tok" and data["cookie_header"].startswith("x-xsrf-token=")
+
+        os.environ.pop("FASIH_SESSION", None)
+        assert importer.load_session() == (cookies, csrf), "saved session must load back"
+
+        try:
+            importer.save_manual_session("")
+            raise AssertionError("empty header must raise ValueError")
+        except ValueError:
+            pass
+
+        server.session_valid = lambda c, t: True  # stub the FASIH network check
+        with TestClient(server.app) as c:
+            assert c.post("/api/session", json={"cookie_header": "a=1"}).json() == {"configured": True, "valid": True}
+            assert c.post("/api/session", json={"cookie_header": ""}).status_code == 400
+    finally:
+        importer.MANUAL_SESSION_PATH = orig
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    print("manual session: ok")
+
+
 if __name__ == "__main__":
     test_cookie()
     test_manifest()
     test_api()
     test_env_session()
+    test_manual_session()
     print("test_server OK")

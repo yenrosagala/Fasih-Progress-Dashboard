@@ -54,6 +54,31 @@ def _parse_session_blob(data):
     return cookies, csrf_token
 
 
+def save_manual_session(cookie_header):
+    """Persist a pasted FASIH Cookie header to inputs/manual_session.json.
+
+    Same on-disk shape as make_manual_session.py, so load_session() picks it up
+    on the next call (no restart needed). Returns (cookies, csrf_token).
+    Raises ValueError when the header has no parseable cookies.
+    """
+    cookie_header = (cookie_header or "").strip()
+    cookies = _parse_cookie_header(cookie_header) if cookie_header else {}
+    if not cookies:
+        raise ValueError("Header Cookie kosong atau tidak valid.")
+    csrf_token = None
+    for name, value in cookies.items():
+        if name.lower() in {"x-xsrf-token", "xsrf-token"}:
+            csrf_token = value
+            break
+    payload = {"cookie_header": cookie_header, "cookies": cookies}
+    if csrf_token:
+        payload["csrf_token"] = csrf_token
+    os.makedirs("inputs", exist_ok=True)
+    with open(MANUAL_SESSION_PATH, "w") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    return cookies, csrf_token
+
+
 def _load_manual_session():
     if not os.path.exists(MANUAL_SESSION_PATH):
         return None, None
