@@ -24,6 +24,7 @@ Env:
 import asyncio
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import time
@@ -61,6 +62,21 @@ SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
 
 LOGIN_USER = os.getenv("LOGIN_USER", "")
 LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")
+
+# Optional AI progress summary (Progress tab). Off unless GEMINI_API_KEY is set;
+# only pre-aggregated numbers are sent, never per-sample rows.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+AI_PROMPT = (
+    "Anda analis data pengumpulan sampel statistik (BPS). Buat ringkasan progres singkat "
+    "maksimal 180 kata dalam Bahasa Indonesia dari data agregat JSON berikut.\n"
+    "Aturan: pakai HANYA angka yang diberikan, jangan mengarang angka baru; sebut angka "
+    "penting; soroti 2-3 area tertinggal atau risiko; akhiri dengan 2-3 rekomendasi "
+    "tindakan yang konkret.\n"
+    "Format: satu paragraf pembuka, lalu poin-poin dengan awalan \"- \". Jangan gunakan "
+    "markdown lain (tanpa bintang, tanpa tanda pagar, tanpa tabel).\n\nData agregat:\n"
+)
 
 
 def _google_enabled():
@@ -316,7 +332,7 @@ async def healthz():
 async def me(request: Request):
     user = current_user(request)
     mode = "open" if _auth_disabled() else ("google" if _google_enabled() else "password")
-    return {"email": user, "user": user, "auth": mode}
+    return {"email": user, "user": user, "auth": mode, "ai": bool(GEMINI_API_KEY)}
 
 
 @app.get("/api/session")
@@ -416,6 +432,48 @@ async def scrape_period(sid: str, pid: str):
 @app.get("/api/survey/{sid}/period/{pid}/status")
 async def scrape_period_status(sid: str, pid: str):
     return _jobs.get(f"{sid}:{pid}", {"state": "idle"})
+
+
+@app.post("/api/summarize")
+async def summarize(request: Request):
+    """AI progress summary from the client's pre-aggregated numbers.
+
+    The frontend sends aggregates only (counts, percentages, per-region rolls) so
+    no per-sample row leaves this server. Requires GEMINI_API_KEY in the env.
+    """
+    if not GEMINI_API_KEY:
+        raise HTTPException(503, "Ringkasan AI belum dikonfigurasi: set env GEMINI_API_KEY lalu restart container.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    stats = (body or {}).get("stats") or {}
+    if not isinstance(stats, dict) or not stats:
+        raise HTTPException(400, "stats kosong")
+    payload = json.dumps(stats, ensure_ascii=False, indent=1)
+    if len(payload) > 40000:
+        raise HTTPException(413, "stats terlalu besar")
+    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{GEMINI_MODEL}:generateContent")
+    req = {
+        "contents": [{"parts": [{"text": AI_PROMPT + payload}]}],
+        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 900},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(url, json=req, headers={"x-goog-api-key": GEMINI_API_KEY})
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Gagal menghubungi Gemini: {e}")
+    if r.status_code != 200:
+        raise HTTPException(502, f"Gemini menolak permintaan (HTTP {r.status_code}): {r.text[:300]}")
+    try:
+        parts = r.json()["candidates"][0]["content"]["parts"]
+        text = "".join(p.get("text", "") for p in parts).strip()
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise HTTPException(502, "Respons Gemini tidak dikenali")
+    if not text:
+        raise HTTPException(502, "Gemini tidak mengembalikan ringkasan")
+    return {"summary": text, "model": GEMINI_MODEL}
 
 
 @app.get("/auth/login")
