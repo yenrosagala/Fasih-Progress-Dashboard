@@ -204,14 +204,20 @@ def test_on_demand():
 
         def json(self): return self._d
 
+    posts = []
+
     async def fake_post(url, headers, cookies, payload):
+        posts.append(url)
         return _Resp({"data": {"content": [
             {"id": "S1", "name": "Survei Satu"},
             {"id": "S2", "name": "Survei Dua"},
             {"name": "no-id"},
         ]}})
 
+    pcalls = []
+
     async def fake_periods(sid, headers, cookies):
+        pcalls.append(sid)
         return [{"id": "P1", "name": "TW1", "startDate": "2026-01-01", "endDate": "2026-03-31"}]
 
     calls = []
@@ -230,9 +236,14 @@ def test_on_demand():
 
     orig = (server.post_requests, server._session_headers, data_tab._survey_periods,
             server._refresh_period, server.SITE_DIR)
+
+    async def fake_headers():
+        return {}, {}
+
     try:
+        server._clear_caches()
         server.post_requests = fake_post
-        server._session_headers = lambda: ({}, {})
+        server._session_headers = fake_headers
         data_tab._survey_periods = fake_periods
         server._refresh_period = stub_period
         server.SITE_DIR = tmp
@@ -240,10 +251,15 @@ def test_on_demand():
         with TestClient(server.app) as c:
             assert c.get("/api/surveys").json()["surveys"] == [
                 {"id": "S1", "name": "Survei Satu"}, {"id": "S2", "name": "Survei Dua"}]
+            assert c.get("/api/surveys").json()["surveys"] == [
+                {"id": "S1", "name": "Survei Satu"}, {"id": "S2", "name": "Survei Dua"}], "cache miss"
+            assert len(posts) == 1, "warm survey list must not re-fetch FASIH"
 
             per = c.get("/api/survey/S1/periods").json()["periods"]
             assert per == [{"id": "P1", "name": "TW1", "startDate": "2026-01-01",
                             "endDate": "2026-03-31", "cached": True}], per
+            assert c.get("/api/survey/S1/periods").status_code == 200, "warm period list"
+            assert len(pcalls) == 1, "warm period list must not re-fetch FASIH"
 
             assert c.get("/api/survey/S1/period/P1/data").status_code == 200
             assert c.get("/api/survey/S1/period/PX/data").status_code == 404

@@ -217,21 +217,57 @@ async def _refresh_survey(sid):
     return len(rows), generated
 
 
-def _session_headers():
+# The two network calls behind a slow survey list: the session probe and the
+# list fetch itself. Both answers are reused so repeat page loads don't re-hit
+# FASIH. ponytail: in-memory only; dropped on restart and when a new session
+# is saved (the account behind the session may differ).
+_PROBE_TTL = 60.0    # seconds a session probe stays trusted
+_LIST_TTL = 300.0    # seconds a survey/period list is reused
+_probe_cache = {"key": None, "at": 0.0, "ok": False}
+_list_cache = {}
+
+
+def _clear_caches():
+    _probe_cache.update(key=None, at=0.0, ok=False)
+    _list_cache.clear()
+
+
+async def _probe_valid(cookies, csrf):
+    """session_valid(), but cached and off the event loop (it does network I/O)."""
+    pairs = "&".join(f"{k}={v}" for k, v in sorted((cookies or {}).items()))
+    key = f"{csrf}|{pairs}"
+    if _probe_cache["key"] == key and time.time() - _probe_cache["at"] < _PROBE_TTL:
+        return _probe_cache["ok"]
+    ok = await asyncio.to_thread(session_valid, cookies, csrf)
+    _probe_cache.update(key=key, at=time.time(), ok=ok)
+    return ok
+
+
+async def _cached(key, make):
+    """Warm async result reused for _LIST_TTL; make() refreshes it otherwise."""
+    hit = _list_cache.get(key)
+    if hit and time.time() - hit[0] < _LIST_TTL:
+        return hit[1]
+    val = await make()
+    _list_cache[key] = (time.time(), val)
+    return val
+
+
+async def _session_headers():
     """(headers, cookies) for FASIH calls, or raise a user-facing error."""
     cookies, csrf = load_session()
     if not (cookies and csrf):
         raise RuntimeError("Sesi FASIH belum diatur di server. Isi inputs/manual_session.json atau variabel FASIH_SESSION, lalu mulai ulang server.")
-    if not session_valid(cookies, csrf):
+    if not await _probe_valid(cookies, csrf):
         raise RuntimeError("Sesi FASIH sudah kedaluwarsa. Perbarui inputs/manual_session.json atau FASIH_SESSION, lalu coba lagi.")
     return {**BASE_HEADERS, "X-XSRF-TOKEN": csrf}, cookies
 
 
-def _session_headers_or_503():
+async def _session_headers_or_503():
     """_session_headers() for request handlers: missing/expired session -> 503
     (the frontend opens the 'Atur Sesi' dialog on 503, not on 500)."""
     try:
-        return _session_headers()
+        return await _session_headers()
     except RuntimeError as e:
         raise HTTPException(503, str(e))
 
@@ -239,7 +275,7 @@ def _session_headers_or_503():
 async def _refresh_period(sid, pid, key):
     """On-demand scrape of exactly one survey period; caches data/<pid>.json."""
     _stage(key, 0)
-    headers, cookies = _session_headers()
+    headers, cookies = await _session_headers()
 
     meta = (await get_requests(surveys_base_url + sid, headers, cookies)).json().get("data") or {}
     gid = meta.get("regionGroupId")
@@ -298,7 +334,8 @@ async def set_session(request: Request):
         cookies, csrf = save_manual_session(header)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"configured": True, "valid": bool(session_valid(cookies, csrf))}
+    _clear_caches()  # a new session may belong to another account
+    return {"configured": True, "valid": await _probe_valid(cookies, csrf)}
 
 
 @app.post("/api/survey/{sid}/refresh")
@@ -327,17 +364,22 @@ async def status(sid: str):
 # --------------------------------------------------------------------------
 @app.get("/api/surveys")
 async def api_surveys():
-    headers, cookies = _session_headers_or_503()
-    resp = await post_requests(survey_datatable_url, headers, cookies, payload_survey)
-    content = resp.json().get("data", {}).get("content", [])
-    surveys = [{"id": s.get("id"), "name": s.get("name")} for s in content if s.get("id") and s.get("name")]
-    return {"surveys": surveys}
+    headers, cookies = await _session_headers_or_503()
+
+    async def _fetch():
+        resp = await post_requests(survey_datatable_url, headers, cookies, payload_survey)
+        content = resp.json().get("data", {}).get("content", [])
+        return [{"id": s.get("id"), "name": s.get("name")} for s in content if s.get("id") and s.get("name")]
+
+    return {"surveys": await _cached("surveys", _fetch)}
 
 
 @app.get("/api/survey/{sid}/periods")
 async def api_periods(sid: str):
-    headers, cookies = _session_headers_or_503()
-    periods = await data_tab._survey_periods(sid, headers, cookies)
+    headers, cookies = await _session_headers_or_503()
+    # cache the raw FASIH list; the on-disk "cached" flag is computed live so a
+    # freshly scraped period shows its checkmark immediately.
+    periods = await _cached(f"periods:{sid}", lambda: data_tab._survey_periods(sid, headers, cookies))
     out = []
     for p in periods:
         pid = p.get("id")
