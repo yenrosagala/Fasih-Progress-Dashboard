@@ -385,7 +385,7 @@ _SHELL = r"""<!DOCTYPE html>
       <button class="tab" data-tab="dashboard">Dashboard</button>
       <button class="tab" data-tab="progress">Progress</button>
       <span class="gen" id="shown"></span>
-      <button id="png" class="pngbtn" title="Unduh tampilan ini sebagai PNG (tanpa header &amp; judul tab)">&#11015; PNG</button>
+      <button id="png" class="pngbtn" title="Unduh tampilan ini sebagai PNG (tanpa header, judul tab, &amp; ringkasan AI)">&#11015; PNG</button>
     </div>
 
     <section id="panel-data" class="panel active">
@@ -1107,12 +1107,13 @@ function dlName(){
   return "dashboard-" + nm + "-" + ds + ".png";
 }
 
-async function panelPNG(ignore){
+async function panelPNG(){
   if (typeof html2canvas !== "function") throw new Error("Pustaka ekspor PNG belum termuat (butuh koneksi internet).");
   const panel = document.querySelector(".panel.active");
   if (!panel) return null;
   const bg = getComputedStyle(document.body).backgroundColor;
-  const canvas = await html2canvas(panel, { scale: 3, backgroundColor: bg, logging: false, useCORS: true, ignoreElements: ignore });
+  /* The AI summary never belongs in an image - it is the WhatsApp caption. */
+  const canvas = await html2canvas(panel, { scale: 3, backgroundColor: bg, logging: false, useCORS: true, ignoreElements: el => el.id === "aisum" });
   const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
   return { canvas: canvas, blob: blob };
 }
@@ -1151,7 +1152,7 @@ document.getElementById("wabtn").onclick = async () => {
   const msg = head + (abody ? "\n\n" + abody : "");
   btn.disabled = true; btn.textContent = "Menyiapkan…";
   try {
-    const shot = await panelPNG(el => el.id === "aisum");
+    const shot = await panelPNG();
     const file = shot ? new File([shot.blob], dlName(), { type: "image/png" }) : null;
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], text: msg }); return; }
