@@ -1,0 +1,10 @@
+# Runtime deps for the deployed dashboard (server.py).
+# The scraper/CLI (main.py) additionally needs the full set in requirements.txt
+# (matplotlib, openpyxl, pygame, InquirerPy) — those are NOT needed to serve.
+httpx==0.28.1
+fastapi==0.141.1
+uvicorn==0.52.1
+pandas==3.0.1
+numpy==2.4.3
+selenium==4.41.0
+webdriver-manager==4.0.2

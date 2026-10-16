@@ -115,3 +115,41 @@ FASIH_MAX_CONCURRENCY=1 FASIH_REQUEST_INTERVAL=2 python main.py --relogin
 | openpyxl | 3.1.5 |
 | pandas | 3.0.1 |
 | selenium | 4.41.0 |
+
+## Deployment (Docker)
+
+Dashboard server (`server.py`) berjalan sebagai satu proses uvicorn. Gunakan Docker:
+
+```bash
+docker build -t fasih-analytics .
+docker run -p 8080:8080 \
+  -e SESSION_SECRET="$(openssl rand -hex 32)" \
+  -e PUBLIC_BASE_URL="https://dashboard.example.com" \
+  -e GOOGLE_CLIENT_ID="..." \
+  -e GOOGLE_CLIENT_SECRET="..." \
+  -e GOOGLE_HD="bps.go.id" \
+  -e FASIH_SESSION="<cookie_header>" \
+  fasih-analytics
+```
+
+Image hanya memasang `requirements-server.txt` (runtime server). `requirements.txt` (matplotlib/pygame/openpyxl/InquirerPy) hanya untuk scraper `main.py`.
+
+### Environment
+
+| Variabel | Wajib | Keterangan |
+|---|---|---|
+| `SESSION_SECRET` | ya (prod) | Kunci tanda tangan cookie. Tanpa ini sesi login hilang tiap restart. |
+| `PUBLIC_BASE_URL` | ya (prod) | URL publik (https) untuk redirect OAuth. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ya | Jika kosong, app jalan tanpa login (mode dev). |
+| `GOOGLE_HD` | tidak | Batasi domain Workspace, mis. `bps.go.id`. |
+| `FASIH_SESSION` | ya (untuk refresh) | Cookie header FASIH; sesi file tidak ikut ke image. |
+| `AUTH_DISABLED=1` | tidak | Paksa mode tanpa login. |
+| `SESSION_TTL` | tidak | Umur cookie (detik), default 8 jam. |
+| `HOST` / `PORT` | tidak | Default `0.0.0.0:PORT`; platform biasanya mengisi `PORT`. |
+
+### Catatan
+
+- **Satu proses saja.** Queue refresh disimpan di memori; jangan pakai banyak worker/replica.
+- **Persistensi.** Hasil refresh ditulis ke `outputs/site/`; pada filesystem ephemeral hilang saat restart (site asli tetap ada di image). Untuk menyimpan, mount volume ke `/app/outputs`.
+- **Sesi FASIH.** Tidak ikut ke image dan cepat kedaluwarsa. Setel `FASIH_SESSION` (atau mount `inputs/manual_session.json`) dan perbarui berkala.
+- Mendukung Fly.io, Render, Railway, dan VPS — arahkan ke Dockerfile ini.

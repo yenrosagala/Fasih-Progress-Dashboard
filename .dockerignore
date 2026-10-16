@@ -1,0 +1,37 @@
+# --- VCS / editor ---
+.git
+.gitignore
+.Rhistory
+.Rproj.user
+.claude
+
+# --- python build noise ---
+venv
+__pycache__
+*.pyc
+
+# --- large local artifacts (rebuilt/refetched; not needed to serve) ---
+outputs/data_sample.json
+outputs/pivot_report.xlsx
+outputs/csv/data_sample*.csv
+outputs/csv/report_*.csv
+outputs/csv/survey_collection_2026*.csv
+
+# --- dev-only assets ---
+notebooks
+images
+inputs/*.xlsx
+inputs/manual_session.json
+inputs/session_cache.json
+launch.bat
+launch.command
+make_manual_session.py
+test_server.py
+test_site.py
+*.md
+.env
+
+# NOTE: keep these in the image — required at runtime:
+#   inputs/survey_config.json
+#   outputs/site/**
+#   outputs/csv/survey_collection_deadline_adjusted.csv
