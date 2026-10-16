@@ -139,9 +139,9 @@ async def _refresh_survey(sid):
 
     cookies, csrf = load_session()
     if not (cookies and csrf):
-        raise RuntimeError("no FASIH session; refresh inputs/manual_session.json")
+        raise RuntimeError("Sesi FASIH belum diatur di server. Isi inputs/manual_session.json atau variabel FASIH_SESSION, lalu mulai ulang server.")
     if not session_valid(cookies, csrf):
-        raise RuntimeError("FASIH session expired; refresh inputs/manual_session.json")
+        raise RuntimeError("Sesi FASIH sudah kedaluwarsa. Perbarui inputs/manual_session.json atau FASIH_SESSION, lalu coba lagi.")
 
     headers = {**BASE_HEADERS, "X-XSRF-TOKEN": csrf}
     data_df = await data_tab.collect_data_tab(row, [name], headers, cookies)
@@ -162,6 +162,12 @@ async def healthz():
 @app.get("/api/me")
 async def me(request: Request):
     return {"email": current_user(request)}
+
+
+@app.get("/api/session")
+async def api_session():
+    cookies, csrf = load_session()
+    return {"configured": bool(cookies and csrf)}
 
 
 @app.post("/api/survey/{sid}/refresh")

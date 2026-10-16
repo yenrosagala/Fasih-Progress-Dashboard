@@ -507,7 +507,7 @@ function applySurvey(s){
   document.getElementById("demopill").style.display = s.demo ? "" : "none";
   document.getElementById("app").style.display = "";
   const box = document.getElementById("statusbox");
-  box.style.display = "none";
+  if (SESSION_WARN) showNotice(SESSION_WARN, true); else box.style.display = "none";
   buildFilterUI();
   apply();
   refreshVisible();
@@ -608,6 +608,7 @@ pngBtn.onclick = async () => {
 /* Refresh button: only works when served by the Phase 2 backend (server.py).
    Static hosting has no api/*, so detection hides the button. */
 let BACKEND = false;
+let SESSION_WARN = "";
 const refreshBtn = document.getElementById("refresh");
 const REFRESH_LABEL = "\u21BB Perbarui";
 function refreshVisible(){ refreshBtn.style.display = (BACKEND && META.id && !META.demo) ? "" : "none"; }
@@ -634,7 +635,20 @@ refreshBtn.onclick = async () => {
     showNotice("Gagal memperbarui: " + e.message + " (butuh backend server.py)", true);
   }
 };
-(async () => { try { const r = await fetch("api/me"); BACKEND = r.ok; } catch(e){ BACKEND = false; } refreshVisible(); })();
+(async () => {
+  try { const r = await fetch("api/me"); BACKEND = r.ok; } catch(e){ BACKEND = false; }
+  refreshVisible();
+  if (BACKEND) {
+    try {
+      const s = await (await fetch("api/session")).json();
+      if (!s.configured){
+        SESSION_WARN = "Sesi FASIH belum diatur di server, jadi tombol \u201cPerbarui\u201d akan gagal. Isi inputs/manual_session.json atau variabel FASIH_SESSION, lalu mulai ulang server.";
+        setRefresh(REFRESH_LABEL, true);
+        showNotice(SESSION_WARN, true);
+      }
+    } catch(e){}
+  }
+})();
 
 init();
 </script>
