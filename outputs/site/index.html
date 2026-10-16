@@ -219,6 +219,7 @@
       <div class="cards" id="pkpi"></div>
       <div class="aiwrap">
         <button id="aibtn" class="pngbtn" style="display:none">&#10024; Ringkas dengan AI</button>
+        <button id="wabtn" class="pngbtn" style="display:none">&#128172; Kirim ke WhatsApp</button>
         <span class="gen" id="aifoot"></span>
       </div>
       <div class="aisum" id="aisum" style="display:none"></div>
@@ -707,6 +708,7 @@ function applySurvey(s){
 
   const empty = !DATA.length;
   document.getElementById("aisum").style.display = "none";
+  document.getElementById("wabtn").style.display = "none";
   document.getElementById("emptystate").style.display = empty ? "" : "none";
   document.getElementById("filters").style.display = empty ? "none" : "";
   const tabsEl = document.querySelector(".tabs");
@@ -914,24 +916,58 @@ function dlName(){
   return "dashboard-" + nm + "-" + ds + ".png";
 }
 
+async function panelPNG(){
+  if (typeof html2canvas !== "function") throw new Error("Pustaka ekspor PNG belum termuat (butuh koneksi internet).");
+  const panel = document.querySelector(".panel.active");
+  if (!panel) return null;
+  const bg = getComputedStyle(document.body).backgroundColor;
+  const canvas = await html2canvas(panel, { scale: 3, backgroundColor: bg, logging: false, useCORS: true });
+  const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+  return { canvas: canvas, blob: blob };
+}
+function grabPNG(blob){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = dlName();
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 const pngBtn = document.getElementById("png");
 pngBtn.onclick = async () => {
-  if (typeof html2canvas !== "function"){ alert("Pustaka ekspor PNG belum termuat (butuh koneksi internet)."); return; }
-  const panel = document.querySelector(".panel.active");
-  if (!panel) return;
   const old = pngBtn.textContent;
-  pngBtn.disabled = true; pngBtn.textContent = "Menyiapkan\u2026";
+  pngBtn.disabled = true; pngBtn.textContent = "Menyiapkan…";
   try {
-    const bg = getComputedStyle(document.body).backgroundColor;
-    const canvas = await html2canvas(panel, { scale: 3, backgroundColor: bg, logging: false, useCORS: true });
-    const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = dlName();
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const shot = await panelPNG();
+    if (shot) grabPNG(shot.blob);
   } catch(e){ alert("Gagal membuat PNG: " + e.message); }
   finally { pngBtn.disabled = false; pngBtn.textContent = old; }
+};
+
+/* Share the current view as a PNG plus the AI summary over WhatsApp.
+   The Web Share API can only carry a file where the OS offers a share sheet
+   (mobile, Chrome desktop). Everywhere else we download the PNG and open a
+   wa.me text link, so the picture is attached by hand.
+   ponytail: one-tap send from any browser would need the WhatsApp Cloud API
+   (a Meta business number plus a webhook) - that is server work, not built here. */
+document.getElementById("wabtn").onclick = async () => {
+  const btn = document.getElementById("wabtn"), label = btn.textContent;
+  const abody = (document.querySelector("#aisum .abody") || {}).textContent || "";
+  const head = (META.name || "Progres") + " \u2022 " + periodName(CUR.pid) +
+               " \u2022 n=" + (DATA.length || 0).toLocaleString("id-ID");
+  const msg = head + (abody ? "\n\n" + abody : "");
+  btn.disabled = true; btn.textContent = "Menyiapkan…";
+  try {
+    const shot = await panelPNG();
+    const file = shot ? new File([shot.blob], dlName(), { type: "image/png" }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], text: msg }); return; }
+      catch(e){ if (e && e.name === "AbortError") return; }
+    }
+    if (shot) grabPNG(shot.blob);
+    window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank", "noopener");
+  } catch(e){ alert("Gagal mengirim ke WhatsApp: " + e.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
 };
 
 /* Refresh button: only works when served by the Phase 2 backend (server.py).
@@ -1041,6 +1077,7 @@ async function summarize(){
     if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
     box.innerHTML = '<h4>Ringkasan AI<span class="gen">' + esc(j.model || "") + " \u2022 " + esc(head) +
                     "</span></h4><div class=\"abody\">" + esc(j.summary) + "</div>";
+    document.getElementById("wabtn").style.display = "";
   } catch(e){
     box.innerHTML = '<h4>Ringkasan AI</h4><div class="abody">Gagal: ' + esc(e.message) + "</div>";
   } finally { btn.disabled = false; btn.textContent = label; }
