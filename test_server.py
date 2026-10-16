@@ -310,6 +310,56 @@ def test_login():
     print("login: ok")
 
 
+def test_period_dates():
+    """A period scrape must store the FASIH start/end dates in the payload, so the
+    dashboard can show the remaining time (elapsed/left days)."""
+    import asyncio
+    import tempfile
+
+    import build_site
+    import data_tab
+    import pandas as pd
+
+    class _Resp:
+        def json(self): return {"data": {"name": "Survei Satu", "regionGroupId": "G1"}}
+
+    async def _async(v):
+        return v
+
+    async def fake_headers():
+        return {}, {}
+
+    async def fake_periods(sid, headers, cookies):
+        return [{"id": "P1", "name": "TW1", "startDate": "2026-01-01", "endDate": "2026-03-31"}]
+
+    async def fake_collect(name, pid, gid, headers, cookies, period_name="", progress=None):
+        return pd.DataFrame([{"a": 1}])
+
+    tmp = tempfile.mkdtemp()
+    os.makedirs(os.path.join(tmp, "data"), exist_ok=True)
+
+    orig = (server.get_requests, server._session_headers, data_tab._survey_periods,
+            data_tab.collect_period, build_site.SITE_DIR)
+    try:
+        server._clear_caches()
+        server.get_requests = lambda *a, **k: _async(_Resp())
+        server._session_headers = fake_headers
+        data_tab._survey_periods = fake_periods
+        data_tab.collect_period = fake_collect
+        build_site.SITE_DIR = tmp
+
+        rows, _ = asyncio.run(server._refresh_period("S1", "P1", "S1:P1"))
+        assert rows == 1, rows
+        with open(os.path.join(tmp, "data", "P1.json"), encoding="utf-8") as f:
+            payload = json.load(f)
+        assert payload["period"] == {"start": "2026-01-01", "end": "2026-03-31"}, payload["period"]
+        assert payload["rows"] == [{"a": 1}]
+    finally:
+        (server.get_requests, server._session_headers, data_tab._survey_periods,
+         data_tab.collect_period, build_site.SITE_DIR) = orig
+    print("period-dates: ok")
+
+
 if __name__ == "__main__":
     test_cookie()
     test_manifest()
@@ -320,4 +370,5 @@ if __name__ == "__main__":
     test_periods()
     test_on_demand()
     test_login()
+    test_period_dates()
     print("test_server OK")

@@ -283,10 +283,12 @@ async def _refresh_period(sid, pid, key):
         raise RuntimeError(f"regionGroupId tidak ditemukan untuk survei {sid}")
     name = meta.get("name", "")
 
-    pname = ""
+    pname, pstart, pend = "", "", ""
     for p in await data_tab._survey_periods(sid, headers, cookies):
         if p.get("id") == pid:
             pname = p.get("name") or ""
+            pstart = p.get("startDate") or ""
+            pend = p.get("endDate") or ""
             break
 
     _stage(key, 1, "menyiapkan\u2026")
@@ -299,7 +301,7 @@ async def _refresh_period(sid, pid, key):
 
     _stage(key, 2, f"{len(rows)} baris")
     generated = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-    build_site.write_payload(pid, name, "pencacahan", rows, generated, {"start": "", "end": ""})
+    build_site.write_payload(pid, name, "pencacahan", rows, generated, {"start": pstart, "end": pend})
     build_site.rebuild_manifest()
     _stage(key, len(PERIOD_STEPS), f"{len(rows)} baris")
     return len(rows), generated
