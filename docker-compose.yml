@@ -16,7 +16,8 @@ services:
       LOGIN_USER: ${LOGIN_USER:-admin}
       LOGIN_PASSWORD: ${LOGIN_PASSWORD:-admin123}
       # Optional: enables the "Ringkas dengan AI" button on the Progress tab.
-      # Set GEMINI_API_KEY=... in .env. Only aggregate numbers are sent to Gemini.
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      # Set OPENROUTER_API_KEY=... in .env. Only aggregate numbers are sent to the
+      # AI backend (OpenRouter), never per-sample rows.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODELS: ${OPENROUTER_MODELS:-openai/gpt-4o-mini}
     restart: unless-stopped

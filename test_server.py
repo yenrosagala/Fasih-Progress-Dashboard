@@ -361,48 +361,94 @@ def test_period_dates():
 
 
 def test_summarize():
-    """AI summary endpoint: gated on the key, rejects empty stats, forwards the
-    aggregates to Gemini and returns the text. No network (httpx client stubbed)."""
-    seen = {}
+    """AI summary endpoint: gated on the key, rejects empty stats, forwards only the
+    aggregates to OpenRouter. No network (the httpx AsyncClient is stubbed)."""
+    import ai as ai_mod
+
+    seen = []
 
     class _Resp:
-        status_code = 200
-        text = "ok"
+        def __init__(self, status=200, payload=None):
+            self.status_code = status
+            self.text = "ok"
+            self._p = payload or {}
 
         def json(self):
-            return {"candidates": [{"content": {"parts": [{"text": "Ringkasan.\n- Poin satu"}]}}]}
+            return self._p
+
+    def _ok(content):
+        return _Resp(200, {"choices": [{"message": {"content": content}}]})
 
     class _Client:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
+        """Stub AsyncClient: replies come from a class-level queue, one per call."""
+
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
         async def post(self, url, json=None, headers=None):
-            seen.update(url=url, body=json, headers=headers)
-            return _Resp()
+            seen.append({"url": url, "body": json, "headers": headers})
+            return self._reply.pop(0)
 
     stats = {"jumlah_sampel": 100, "persen_submit_plus": 42.5, "sisa_hari": 3}
-    orig = (server.GEMINI_API_KEY, server.GEMINI_MODEL, server.httpx.AsyncClient)
+    keys = ("OPENROUTER_API_KEY", "OPENROUTER_MODELS")
+    saved = {k: os.environ.get(k) for k in keys}
+    orig_client = ai_mod.httpx.AsyncClient
+
+    def _env(**kw):
+        for k, v in kw.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
     try:
-        server.GEMINI_API_KEY = ""
+        _env(OPENROUTER_API_KEY=None, OPENROUTER_MODELS=None)
         with TestClient(server.app) as c:
+            assert c.get("/api/me").json()["ai"] is False
             assert c.post("/api/summarize", json={"stats": stats}).status_code == 503
 
-        server.GEMINI_API_KEY = "k"
-        server.GEMINI_MODEL = "gemini-test"
-        server.httpx.AsyncClient = _Client
+        _env(OPENROUTER_API_KEY="sk-test", OPENROUTER_MODELS="m1,m2")
+        ai_mod.httpx.AsyncClient = _Client
         with TestClient(server.app) as c:
+            assert c.get("/api/me").json()["ai"] is True
             assert c.post("/api/summarize", json={}).status_code == 400
             assert c.post("/api/summarize", json={"stats": {}}).status_code == 400
+
+            # happy path: the first model answers
+            good = "Progres survei berjalan baik: 100 sampel, submit 42.5%, sisa 3 hari.\n- Poin satu."
+            _Client._reply = [_ok(good)]
             r = c.post("/api/summarize", json={"stats": stats})
             assert r.status_code == 200, r.text
-            assert r.json() == {"summary": "Ringkasan.\n- Poin satu", "model": "gemini-test"}
-    finally:
-        (server.GEMINI_API_KEY, server.GEMINI_MODEL, server.httpx.AsyncClient) = orig
+            assert r.json() == {"summary": good, "model": "openrouter:m1"}
+            # the key travels in a header, never the URL, and the prompt carries the numbers
+            assert seen[-1]["url"] == ai_mod.URL and "sk-test" not in seen[-1]["url"]
+            assert seen[-1]["headers"]["Authorization"] == "Bearer sk-test"
+            assert seen[-1]["headers"]["HTTP-Referer"]
+            assert "42.5" in seen[-1]["body"]["messages"][0]["content"]
 
-    # the key travels in a header, never the URL; and the prompt carries the numbers
-    assert "gemini-test:generateContent" in seen["url"], seen["url"]
-    assert "key=" not in seen["url"] and seen["headers"]["x-goog-api-key"] == "k"
-    assert "42.5" in seen["body"]["contents"][0]["parts"][0]["text"]
+            # a junk / too-short reply falls through to the next model
+            good2 = "Ringkasan kedua: progres stabil, perlu perhatian pada akhir periode kerja."
+            _Client._reply = [_ok("User Safety: safe"), _ok(good2)]
+            r = c.post("/api/summarize", json={"stats": stats})
+            assert r.status_code == 200 and r.json()["model"] == "openrouter:m2", r.text
+            assert r.json()["summary"] == good2
+
+            # a rejected key fails fast instead of walking the whole model list
+            n = len(seen)
+            _Client._reply = [_Resp(401, {"error": {"message": "unauthorized"}}),
+                              _ok("harusnya tidak terpakai")]
+            r = c.post("/api/summarize", json={"stats": stats})
+            assert r.status_code == 502 and "401" in r.json()["detail"], r.text
+            assert len(seen) == n + 1, "must stop at the first 401"
+    finally:
+        ai_mod.httpx.AsyncClient = orig_client
+        _env(**{k: saved[k] for k in keys})
     print("summarize: ok")
 
 

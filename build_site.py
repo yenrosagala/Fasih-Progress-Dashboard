@@ -1224,7 +1224,7 @@ async function summarize(){
   const head = (META.name || "Progres") + " \u2022 " + periodName(CUR.pid) +
                " \u2022 n=" + (stats.jumlah_sampel || 0).toLocaleString("id-ID");
   box.style.display = "";
-  box.innerHTML = '<h4>Ringkasan AI</h4><div class="abody">Menghubungi Gemini\u2026</div>';
+  box.innerHTML = '<h4>Ringkasan AI</h4><div class="abody">Menyusun ringkasan\u2026</div>';
   try {
     const r = await fetch("api/summarize", { method:"POST",
       headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ stats: stats }) });

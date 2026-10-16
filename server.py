@@ -39,6 +39,7 @@ from fastapi.staticfiles import StaticFiles
 
 import build_site
 import data_tab
+import ai
 from api_client import get_requests, post_requests
 from config import (
     BASE_HEADERS,
@@ -62,11 +63,6 @@ SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
 
 LOGIN_USER = os.getenv("LOGIN_USER", "")
 LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")
-
-# Optional AI progress summary (Progress tab). Off unless GEMINI_API_KEY is set;
-# only pre-aggregated numbers are sent, never per-sample rows.
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 AI_PROMPT = (
     "Anda analis data pengumpulan sampel statistik (BPS). Buat ringkasan progres singkat "
@@ -332,7 +328,7 @@ async def healthz():
 async def me(request: Request):
     user = current_user(request)
     mode = "open" if _auth_disabled() else ("google" if _google_enabled() else "password")
-    return {"email": user, "user": user, "auth": mode, "ai": bool(GEMINI_API_KEY)}
+    return {"email": user, "user": user, "auth": mode, "ai": ai.enabled()}
 
 
 @app.get("/api/session")
@@ -439,10 +435,10 @@ async def summarize(request: Request):
     """AI progress summary from the client's pre-aggregated numbers.
 
     The frontend sends aggregates only (counts, percentages, per-region rolls) so
-    no per-sample row leaves this server. Requires GEMINI_API_KEY in the env.
+    no per-sample row leaves this server. Requires OPENROUTER_API_KEY in the env.
     """
-    if not GEMINI_API_KEY:
-        raise HTTPException(503, "Ringkasan AI belum dikonfigurasi: set env GEMINI_API_KEY lalu restart container.")
+    if not ai.enabled():
+        raise HTTPException(503, "Ringkasan AI belum dikonfigurasi: set env OPENROUTER_API_KEY lalu restart container.")
     try:
         body = await request.json()
     except Exception:
@@ -453,27 +449,11 @@ async def summarize(request: Request):
     payload = json.dumps(stats, ensure_ascii=False, indent=1)
     if len(payload) > 40000:
         raise HTTPException(413, "stats terlalu besar")
-    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{GEMINI_MODEL}:generateContent")
-    req = {
-        "contents": [{"parts": [{"text": AI_PROMPT + payload}]}],
-        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 900},
-    }
     try:
-        async with httpx.AsyncClient(timeout=60) as c:
-            r = await c.post(url, json=req, headers={"x-goog-api-key": GEMINI_API_KEY})
-    except httpx.HTTPError as e:
-        raise HTTPException(502, f"Gagal menghubungi Gemini: {e}")
-    if r.status_code != 200:
-        raise HTTPException(502, f"Gemini menolak permintaan (HTTP {r.status_code}): {r.text[:300]}")
-    try:
-        parts = r.json()["candidates"][0]["content"]["parts"]
-        text = "".join(p.get("text", "") for p in parts).strip()
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise HTTPException(502, "Respons Gemini tidak dikenali")
-    if not text:
-        raise HTTPException(502, "Gemini tidak mengembalikan ringkasan")
-    return {"summary": text, "model": GEMINI_MODEL}
+        text, backend = await ai.summarize(AI_PROMPT + payload)
+    except Exception as e:
+        raise HTTPException(502, f"Gagal membuat ringkasan AI: {str(e)[:400]}")
+    return {"summary": text, "model": backend}
 
 
 @app.get("/auth/login")
