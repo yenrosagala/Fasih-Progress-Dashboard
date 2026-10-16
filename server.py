@@ -4,11 +4,16 @@ Run:
     python server.py                      # http://127.0.0.1:8080
     python -m uvicorn server:app --port 8080
 
-Auth (Google Workspace SSO) engages automatically when GOOGLE_CLIENT_ID and
-GOOGLE_CLIENT_SECRET are set; otherwise the app runs in open dev mode. Set
-AUTH_DISABLED=1 to force open mode even with credentials present.
+Auth engages automatically when either login method is configured; otherwise the
+app runs in open dev mode. Configure one of:
+
+    Password login   LOGIN_USER + LOGIN_PASSWORD    (simplest, works offline)
+    Google SSO       GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET (+ optional GOOGLE_HD)
+
+Set AUTH_DISABLED=1 to force open mode even with credentials present.
 
 Env:
+    LOGIN_USER, LOGIN_PASSWORD               username/password login (enables auth)
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET   OAuth creds (enables SSO)
     GOOGLE_HD                                allowed Workspace domain, e.g. bps.go.id
     PUBLIC_BASE_URL                          external base URL for the OAuth redirect
@@ -28,7 +33,7 @@ from contextlib import asynccontextmanager
 import httpx
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import build_site
@@ -54,11 +59,22 @@ SESSION_COOKIE = "fasih_session"
 SESSION_TTL = int(os.getenv("SESSION_TTL", str(8 * 3600)))
 SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
 
+LOGIN_USER = os.getenv("LOGIN_USER", "")
+LOGIN_PASSWORD = os.getenv("LOGIN_PASSWORD", "")
+
+
+def _google_enabled():
+    return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
+
+
+def _password_enabled():
+    return bool(LOGIN_USER and LOGIN_PASSWORD)
+
 
 def _auth_disabled():
     if os.getenv("AUTH_DISABLED") == "1":
         return True
-    return not (os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
+    return not (_google_enabled() or _password_enabled())
 
 
 def _base_url(request):
@@ -211,6 +227,15 @@ def _session_headers():
     return {**BASE_HEADERS, "X-XSRF-TOKEN": csrf}, cookies
 
 
+def _session_headers_or_503():
+    """_session_headers() for request handlers: missing/expired session -> 503
+    (the frontend opens the 'Atur Sesi' dialog on 503, not on 500)."""
+    try:
+        return _session_headers()
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
 async def _refresh_period(sid, pid, key):
     """On-demand scrape of exactly one survey period; caches data/<pid>.json."""
     _stage(key, 0)
@@ -251,7 +276,9 @@ async def healthz():
 
 @app.get("/api/me")
 async def me(request: Request):
-    return {"email": current_user(request)}
+    user = current_user(request)
+    mode = "open" if _auth_disabled() else ("google" if _google_enabled() else "password")
+    return {"email": user, "user": user, "auth": mode}
 
 
 @app.get("/api/session")
@@ -300,7 +327,7 @@ async def status(sid: str):
 # --------------------------------------------------------------------------
 @app.get("/api/surveys")
 async def api_surveys():
-    headers, cookies = _session_headers()
+    headers, cookies = _session_headers_or_503()
     resp = await post_requests(survey_datatable_url, headers, cookies, payload_survey)
     content = resp.json().get("data", {}).get("content", [])
     surveys = [{"id": s.get("id"), "name": s.get("name")} for s in content if s.get("id") and s.get("name")]
@@ -309,7 +336,7 @@ async def api_surveys():
 
 @app.get("/api/survey/{sid}/periods")
 async def api_periods(sid: str):
-    headers, cookies = _session_headers()
+    headers, cookies = _session_headers_or_503()
     periods = await data_tab._survey_periods(sid, headers, cookies)
     out = []
     for p in periods:
@@ -351,6 +378,8 @@ async def scrape_period_status(sid: str, pid: str):
 async def login(request: Request):
     if _auth_disabled():
         return RedirectResponse("/")
+    if not _google_enabled():
+        return RedirectResponse("/login")
     state = secrets.token_urlsafe(16)
     params = {
         "client_id": os.environ["GOOGLE_CLIENT_ID"],
@@ -400,20 +429,90 @@ async def callback(request: Request, code: str = "", state: str = ""):
 
 @app.get("/auth/logout")
 async def logout():
-    resp = RedirectResponse("/")
+    resp = RedirectResponse("/login")
     resp.delete_cookie(SESSION_COOKIE)
+    return resp
+
+
+LOGIN_PAGE = """<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Masuk - Dashboard Sampel FASIH</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--line:#334155;--fg:#e2e8f0;--mut:#94a3b8;--acc:#38bdf8}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg);padding:16px}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 24px;
+       width:100%;max-width:380px;box-shadow:0 18px 60px rgba(0,0,0,.45)}
+  .logo{width:44px;height:44px;border-radius:11px;background:linear-gradient(135deg,#0284c7,#38bdf8);
+        display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:14px}
+  h1{margin:0 0 4px;font-size:18px}
+  p.sub{margin:0 0 20px;color:var(--mut);font-size:12px}
+  label{display:block;font-size:12px;color:var(--mut);margin:0 0 5px;font-weight:600}
+  input{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);
+        border-radius:9px;padding:11px 12px;font:inherit;margin-bottom:14px}
+  input:focus{outline:none;border-color:var(--acc)}
+  button{width:100%;background:var(--acc);color:#04263a;border:0;border-radius:9px;padding:11px;
+         font:inherit;font-weight:700;cursor:pointer}
+  button:hover{filter:brightness(1.08)}
+  .err{background:#3b1113;border:1px solid #E5484D;color:#F0A3A6;border-radius:9px;
+       padding:9px 12px;font-size:12px;margin-bottom:14px}
+</style></head>
+<body>
+  <form class="box" method="post" action="/login">
+    <div class="logo">&#128202;</div>
+    <h1>Dashboard Sampel FASIH</h1>
+    <p class="sub">Masuk untuk melanjutkan.</p>
+    __ERROR__
+    <label for="username">Nama pengguna</label>
+    <input id="username" name="username" autocomplete="username" autofocus required>
+    <label for="password">Kata sandi</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Masuk</button>
+  </form>
+</body></html>"""
+
+
+def _login_page(error=""):
+    err = '<div class="err">Nama pengguna atau kata sandi salah.</div>' if error else ""
+    return LOGIN_PAGE.replace("__ERROR__", err)
+
+
+@app.get("/login")
+async def login_page(request: Request, error: str = ""):
+    if _auth_disabled() or current_user(request):
+        return RedirectResponse("/")
+    return HTMLResponse(_login_page(error))
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    if _auth_disabled():
+        return RedirectResponse("/", status_code=303)
+    # form is application/x-www-form-urlencoded; parse with stdlib so we don't
+    # need python-multipart (which request.form() would otherwise require).
+    body = (await request.body()).decode("utf-8", "replace")
+    fields = urllib.parse.parse_qs(body)
+    user = (fields.get("username", [""])[0]).strip()
+    pwd = fields.get("password", [""])[0]
+    if not (hmac.compare_digest(user, LOGIN_USER) and hmac.compare_digest(pwd, LOGIN_PASSWORD)):
+        return RedirectResponse("/login?error=1", status_code=303)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(SESSION_COOKIE, _sign(user), httponly=True, samesite="lax",
+                    max_age=SESSION_TTL, secure=_secure_cookie(request))
     return resp
 
 
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     path = request.url.path
-    if _auth_disabled() or path.startswith("/auth/") or path == "/healthz":
+    if _auth_disabled() or path.startswith("/auth/") or path in ("/healthz", "/login"):
         return await call_next(request)
     if not current_user(request):
         if path.startswith("/api/"):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return RedirectResponse("/auth/login")
+        return RedirectResponse("/login")
     return await call_next(request)
 
 
@@ -423,5 +522,11 @@ app.mount("/", StaticFiles(directory=SITE_DIR, html=True), name="site")
 
 if __name__ == "__main__":
     import uvicorn
+    if _auth_disabled():
+        print("auth: OPEN (no login) - set LOGIN_USER/LOGIN_PASSWORD or Google creds to require login")
+    elif _password_enabled():
+        print(f"auth: password login enabled - user '{LOGIN_USER}' (change via LOGIN_USER/LOGIN_PASSWORD)")
+    else:
+        print("auth: Google SSO enabled")
     host = os.getenv("HOST") or ("0.0.0.0" if os.getenv("PORT") else "127.0.0.1")
     uvicorn.run(app, host=host, port=int(os.getenv("PORT", "8080")))

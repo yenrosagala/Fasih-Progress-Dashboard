@@ -9,4 +9,9 @@ services:
       - ./inputs:/app/inputs
       # Serve and persist refreshed payloads on the host.
       - ./outputs:/app/outputs
+    environment:
+      # Login gate. Change these in a .env file next to this compose file
+      # (LOGIN_USER=... / LOGIN_PASSWORD=...). Both must be set to enable login.
+      LOGIN_USER: ${LOGIN_USER:-admin}
+      LOGIN_PASSWORD: ${LOGIN_PASSWORD:-admin123}
     restart: unless-stopped

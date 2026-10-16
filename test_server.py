@@ -266,6 +266,34 @@ def test_on_demand():
     print("on-demand: ok")
 
 
+def test_login():
+    """Password login gate: page, redirect, bad creds, good creds, session cookie."""
+    os.environ.pop("AUTH_DISABLED", None)
+    orig = (server.LOGIN_USER, server.LOGIN_PASSWORD)
+    server.LOGIN_USER, server.LOGIN_PASSWORD = "tester", "secret"
+    try:
+        with TestClient(server.app) as c:
+            r = c.get("/login")
+            assert r.status_code == 200 and "Masuk" in r.text, r.status_code
+
+            r = c.get("/", follow_redirects=False)
+            assert r.status_code in (302, 307) and "/login" in r.headers.get("location", ""), r.status_code
+            assert c.get("/api/me").status_code == 401, "unauthenticated API must be 401"
+
+            r = c.post("/login", data={"username": "tester", "password": "nope"}, follow_redirects=False)
+            assert r.status_code == 303 and "error=1" in r.headers.get("location", ""), r.headers.get("location")
+
+            r = c.post("/login", data={"username": "tester", "password": "secret"}, follow_redirects=False)
+            assert r.status_code == 303 and server.SESSION_COOKIE in r.headers.get("set-cookie", ""), r.headers
+
+            me = c.get("/api/me").json()
+            assert me["user"] == "tester" and me["auth"] == "password", me
+    finally:
+        server.LOGIN_USER, server.LOGIN_PASSWORD = orig
+        os.environ["AUTH_DISABLED"] = "1"
+    print("login: ok")
+
+
 if __name__ == "__main__":
     test_cookie()
     test_manifest()
@@ -275,4 +303,5 @@ if __name__ == "__main__":
     test_steps()
     test_periods()
     test_on_demand()
+    test_login()
     print("test_server OK")

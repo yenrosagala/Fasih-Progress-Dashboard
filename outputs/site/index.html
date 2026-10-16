@@ -107,23 +107,55 @@
   .rfsteps li.done{color:var(--fg)}
   .rfsteps li.cur{color:var(--acc);font-weight:600}
   .rfdot{width:14px;text-align:center;flex:none}
+  .user{color:var(--mut);font-size:12px}
+  .steps{list-style:none;display:flex;gap:8px;padding:0;margin:0 0 14px;flex-wrap:wrap}
+  .step{display:flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--line);border-radius:999px;color:var(--mut);font-size:13px;font-weight:600;background:var(--card);cursor:pointer}
+  .step .dot{width:20px;height:20px;border-radius:50%;background:var(--line);color:var(--fg);display:flex;align-items:center;justify-content:center;font-size:11px;flex:none}
+  .step.active{border-color:var(--acc);color:var(--fg)}
+  .step.active .dot{background:var(--acc);color:#04263a}
+  .step.done .dot{background:#22c55e;color:#04263a}
+  .step.disabled{opacity:.45;cursor:default}
+  .stepbody{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;flex-wrap:wrap}
+  .stepbody .lbl{font-size:12px;color:var(--mut);font-weight:600}
+  .stepbody .pick{flex:1;min-width:220px}
+  .go{background:var(--acc);color:#04263a;border:0;border-radius:8px;padding:8px 18px;font:inherit;font-weight:700;cursor:pointer}
+  .go:hover{filter:brightness(1.08)}
+  .go:disabled{opacity:.5;cursor:default}
 </style>
 </head>
 <body>
 <header>
   <h1 id="title">Dashboard Sampel FASIH</h1>
-  <select id="picker" class="pick" title="Pilih survei"></select>
-  <select id="period" class="pick" title="Pilih periode" style="display:none"></select>
   <span class="pill" id="demopill" style="display:none">data contoh</span>
   <span class="gen" id="genlabel"></span>
   <div class="hdr-actions">
-    <button id="refresh" class="pngbtn" title="Ambil ulang data survei terpilih dari FASIH" style="display:none">&#8635; Perbarui</button>
+    <span class="user" id="userchip" style="display:none"></span>
+    <button id="refresh" class="pngbtn" title="Ambil ulang data periode terpilih dari FASIH" style="display:none">&#8635; Perbarui</button>
     <button id="setsess" class="pngbtn" title="Atur sesi login FASIH untuk refresh" style="display:none">&#9881; Atur Sesi</button>
     <button id="theme" class="themebtn" title="Ganti tema terang/gelap">&#9728;</button>
+    <a id="logout" class="pngbtn" href="/auth/logout" title="Keluar" style="display:none">Keluar</a>
   </div>
 </header>
 <div class="wrap">
   <div id="statusbox" class="notice">Memuat daftar survei&hellip;</div>
+  <div id="wizard" style="display:none">
+    <ol class="steps">
+      <li class="step" id="st1" title="Pilih survei"><span class="dot">1</span><span>Pilih Survei</span></li>
+      <li class="step" id="st2" title="Pilih periode"><span class="dot">2</span><span>Pilih Periode</span></li>
+      <li class="step" id="st3" title="Lihat data"><span class="dot">3</span><span>Data</span></li>
+    </ol>
+    <div class="stepbody" id="sb1">
+      <label class="lbl" for="picker">Survei</label>
+      <select id="picker" class="pick" title="Pilih survei"></select>
+      <button id="toStep2" class="go">Lanjut &rarr;</button>
+    </div>
+    <div class="stepbody" id="sb2" style="display:none">
+      <button id="back1" class="pngbtn">&#8592; Kembali</button>
+      <label class="lbl" for="period">Periode</label>
+      <select id="period" class="pick" title="Pilih periode"></select>
+      <button id="toStep3" class="go">Lihat Data &rarr;</button>
+    </div>
+  </div>
   <div id="app" style="display:none">
     <div class="filters" id="filters"></div>
     <div class="tabs">
@@ -567,7 +599,23 @@ function apply(){
   renderTable();
 }
 
-/* ---------------- boot / survey picker ---------------- */
+/* ---------------- boot / step-by-step wizard ---------------- */
+
+let STEP = 1;
+
+function setStep(n){
+  STEP = n;
+  document.getElementById("sb1").style.display = n === 1 ? "" : "none";
+  document.getElementById("sb2").style.display = (n === 2 && BACKEND) ? "" : "none";
+  document.getElementById("app").style.display = n === 3 ? "" : "none";
+  [1,2,3].forEach(i => {
+    const el = document.getElementById("st" + i);
+    el.classList.toggle("active", i === n);
+    el.classList.toggle("done", i < n);
+  });
+  document.getElementById("st2").style.display = BACKEND ? "" : "none";
+  document.getElementById("wizard").style.display = "";
+}
 
 function applySurvey(s){
   META = { id:s.id||"", generated:s.generated||"", name:s.name||"", type:s.type||"", demo:!!s.demo,
@@ -588,12 +636,12 @@ function applySurvey(s){
   document.getElementById("title").textContent = s.name || "Dashboard Sampel FASIH";
   document.getElementById("genlabel").textContent = "Diperbarui: " + (s.generated || "-");
   document.getElementById("demopill").style.display = s.demo ? "" : "none";
-  document.getElementById("app").style.display = "";
   const box = document.getElementById("statusbox");
   if (SESSION_WARN) showNotice(SESSION_WARN, true); else box.style.display = "none";
   buildFilterUI();
   apply();
   refreshVisible();
+  setStep(3);
 }
 
 function showNotice(msg, isErr){
@@ -602,9 +650,9 @@ function showNotice(msg, isErr){
   box.innerHTML = esc(msg);
 }
 
+/* static hosting: one payload per survey, no period step */
 function pick(id){
   showNotice("Memuat data survei\u2026", false);
-  document.getElementById("app").style.display = "none";
   fetch("data/" + encodeURIComponent(id) + ".json")
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(s => { try { localStorage.setItem("fasih-survey", id); } catch(e){}
@@ -625,16 +673,15 @@ function initStatic(){
       let want = new URLSearchParams(location.search).get("survey");
       if (!want) { try { want = localStorage.getItem("fasih-survey"); } catch(e){} }
       if (!want || !list.some(s => s.id === want)) want = (list.find(s => s.hasData) || list[0]).id;
-      picker.onchange = () => { history.replaceState(null, "", "?survey=" + encodeURIComponent(picker.value)); pick(picker.value); };
-      pick(want);
+      picker.value = want;
+      setStep(1);
     })
     .catch(e => showNotice("Gagal memuat surveys.json: " + e.message + " (jalankan via web server, mis. `python -m http.server` di folder site)", true));
 }
 
-/* on-demand backend flow: survey list (names only) -> pick -> periods -> pick
-   -> load cached payload, or scrape that one period on request. */
+/* on-demand backend flow: step 1 survey (names only) -> step 2 periods ->
+   step 3 load cached payload, or scrape that one period on request. */
 function initBackend(){
-  const picker = document.getElementById("picker");
   showNotice("Memuat daftar survei\u2026", false);
   fetch("api/surveys")
     .then(async r => {
@@ -645,11 +692,12 @@ function initBackend(){
     .then(d => {
       const list = d.surveys || [];
       if (!list.length){ showNotice("Tidak ada survei pencacahan pada akun ini.", true); return; }
+      const picker = document.getElementById("picker");
       picker.innerHTML = list.map(s => '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>").join("");
       let want = new URLSearchParams(location.search).get("survey");
       if (!want || !list.some(s => s.id === want)) want = list[0].id;
-      picker.onchange = () => openSurvey(picker.value);
-      openSurvey(want);
+      picker.value = want;
+      setStep(1);
     })
     .catch(e => {
       showNotice("Gagal memuat daftar survei: " + e.message, true);
@@ -661,9 +709,6 @@ function openSurvey(sid, wantPid){
   CUR = { sid: sid, pid: "" };
   document.getElementById("picker").value = sid;
   try { history.replaceState(null, "", "?survey=" + encodeURIComponent(sid)); } catch(e){}
-  document.getElementById("app").style.display = "none";
-  const periodSel = document.getElementById("period");
-  periodSel.style.display = "none";
   showNotice("Memuat periode\u2026", false);
   fetch("api/survey/" + encodeURIComponent(sid) + "/periods")
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
@@ -674,15 +719,15 @@ function openSurvey(sid, wantPid){
         refreshVisible();
         return;
       }
-      periodSel.style.display = "";
+      const periodSel = document.getElementById("period");
       periodSel.innerHTML = periods.map(p =>
         '<option value="' + esc(p.id) + '"' + (p.cached ? ' data-cached="1"' : "") + ">" +
         esc(p.name || p.id) + (p.cached ? " \u2713" : "") + "</option>").join("");
       let def = wantPid && periods.some(p => p.id === wantPid) ? wantPid : "";
       if (!def){ const cached = periods.filter(p => p.cached); def = (cached[cached.length-1] || periods[periods.length-1]).id; }
       periodSel.value = def;
-      periodSel.onchange = () => openPeriod(periodSel.value);
-      openPeriod(def);
+      refreshVisible();
+      if (wantPid) openPeriod(wantPid); else setStep(2);
     })
     .catch(e => showNotice("Gagal memuat periode: " + e.message, true));
 }
@@ -692,15 +737,15 @@ function openPeriod(pid){
   const sel = document.getElementById("period");
   const cur = sel.options[sel.selectedIndex];
   const pname = (cur && cur.value === pid) ? cur.textContent.replace(/\s*\u2713$/, "") : pid;
-  document.getElementById("app").style.display = "none";
   showNotice("Memuat data\u2026", false);
   fetch("api/survey/" + encodeURIComponent(CUR.sid) + "/period/" + encodeURIComponent(pid) + "/data")
     .then(r => { if (r.status === 404) return null; if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(s => {
       refreshVisible();
       if (!s){
-        showNotice("Belum ada data untuk periode ini (" + esc(pname) + "). Klik \u201cAmbil Data\u201d untuk mengambil dari FASIH.", false);
         setRefresh("\u21BB Ambil Data", false);
+        applySurvey({ id:pid, name:(META.name||CUR.sid), rows:[], columns:[], statusMap:[] });
+        showNotice("Belum ada data untuk periode \u201c" + esc(pname) + "\u201d. Klik tombol \u201cAmbil Data\u201d di kanan atas untuk mengambil dari FASIH.", false);
         return;
       }
       setRefresh(REFRESH_LABEL, false);
@@ -715,6 +760,21 @@ document.querySelectorAll(".tab").forEach(btn => {
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + btn.dataset.tab));
   };
 });
+
+/* wizard controls */
+document.getElementById("toStep2").onclick = () => {
+  const sid = document.getElementById("picker").value;
+  if (!sid) return;
+  if (BACKEND) openSurvey(sid); else pick(sid);
+};
+document.getElementById("back1").onclick = () => setStep(1);
+document.getElementById("toStep3").onclick = () => {
+  const pid = document.getElementById("period").value;
+  if (pid) openPeriod(pid);
+};
+document.getElementById("st1").onclick = () => setStep(1);
+document.getElementById("st2").onclick = () => { if (BACKEND && document.getElementById("period").options.length) setStep(2); };
+document.getElementById("st3").onclick = () => { if (CUR.pid || META.id) setStep(3); };
 document.getElementById("head").addEventListener("click", e => {
   const th = e.target.closest("th"); if (!th) return;
   const k = th.dataset.k;
@@ -850,8 +910,15 @@ document.getElementById("sesssave").onclick = async () => {
   } finally { btn.disabled = false; }
 };
 (async () => {
-  try { const r = await fetch("api/me"); BACKEND = r.ok; } catch(e){ BACKEND = false; }
+  let me = null;
+  try { const r = await fetch("api/me"); if (r.ok){ me = await r.json(); BACKEND = true; } else BACKEND = false; } catch(e){ BACKEND = false; }
   refreshVisible(); sessVisible();
+  if (me && me.auth && me.auth !== "open" && me.user){
+    const chip = document.getElementById("userchip");
+    chip.textContent = "Masuk: " + me.user;
+    chip.style.display = "";
+    document.getElementById("logout").style.display = "";
+  }
   if (BACKEND) {
     let firstVisit = false;
     try { firstVisit = !localStorage.getItem("fasih-setup-seen"); } catch(e){}
