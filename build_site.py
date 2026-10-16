@@ -237,6 +237,8 @@ _SHELL = r"""<!DOCTYPE html>
   .modalbox ol{margin:8px 0;padding-left:20px;font-size:12px;color:var(--mut)}
   .modalbox ol b{color:var(--fg)}
   .modalbox textarea{width:100%;min-height:110px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.4 ui-monospace,Consolas,monospace;resize:vertical}
+  .modalbox .fasihbtn{display:inline-block;text-decoration:none;background:var(--acc);color:#04263a;border-radius:6px;padding:3px 12px;font-weight:700;font-size:12px;margin:2px 0}
+  .modalbox .fasihbtn:hover{filter:brightness(1.08)}
   .modalmsg{min-height:18px;font-size:12px;margin:6px 0}
   .modalmsg.ok{color:#5CB887}
   .modalmsg.err{color:#E5484D}
@@ -386,7 +388,9 @@ _SHELL = r"""<!DOCTYPE html>
     <h3>Atur Sesi FASIH</h3>
     <p class="gen">Sesi ini disimpan di server dan dipakai tombol &ldquo;Perbarui&rdquo;. Tidak perlu mengubah file di server.</p>
     <ol>
-      <li>Buka <b>fasih.bps.go.id</b> dan login di browser.</li>
+      <li>Buka FASIH dan login di browser:<br>
+        <a class="fasihbtn" href="https://fasih-sm.bps.go.id/" target="_blank" rel="noopener">Buka FASIH &#8599;</a>
+      </li>
       <li>Tekan <b>F12</b> &rarr; tab <b>Network</b> &rarr; muat ulang halaman.</li>
       <li>Klik permintaan mana pun &rarr; <b>Request Headers</b> &rarr; cari <b>Cookie</b>.</li>
       <li>Klik kanan nilainya &rarr; <b>Copy value</b>, lalu tempel di kotak bawah.</li>
@@ -1111,14 +1115,12 @@ document.getElementById("sesssave").onclick = async () => {
     document.getElementById("logout").style.display = "";
   }
   if (BACKEND) {
-    let firstVisit = false;
-    try { firstVisit = !localStorage.getItem("fasih-setup-seen"); } catch(e){}
-    if (firstVisit){ try { localStorage.setItem("fasih-setup-seen", "1"); } catch(e){} openSess(); }
     try {
       const s = await (await fetch("api/session")).json();
       if (!s.configured){
         SESSION_WARN = "Sesi FASIH belum diatur di server. Klik \u201cAtur Sesi\u201d untuk menempel sesi dari browser sebelum daftar survei bisa dimuat.";
         showNotice(SESSION_WARN, true);
+        openSess();
       }
     } catch(e){}
     initBackend();
