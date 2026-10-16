@@ -269,6 +269,7 @@ _SHELL = r"""<!DOCTYPE html>
   .sec.zoomable{cursor:zoom-in;transition:border-color .15s}
   .sec.zoomable:hover{border-color:var(--acc)}
   .cmmore{color:var(--mut);font-size:11px;margin:0 0 10px}
+  .cmbody{max-height:60vh;overflow:auto;padding-right:4px}
   .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:var(--mut)}
   .legend span{display:inline-flex;align-items:center;gap:5px}
   .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
@@ -410,7 +411,7 @@ _SHELL = r"""<!DOCTYPE html>
   <div class="modalbox" role="dialog" aria-modal="true" aria-label="Perbesar grafik">
     <h3 id="cmtitle"></h3>
     <div class="cmmore" id="cmsub"></div>
-    <div id="cmbody"></div>
+    <div id="cmbody" class="cmbody"></div>
     <div class="modalfoot">
       <button id="cmclose" class="pngbtn">Tutup</button>
     </div>
