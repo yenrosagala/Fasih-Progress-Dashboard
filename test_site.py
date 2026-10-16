@@ -66,6 +66,22 @@ def check_js():
     print(f"  js: {len(blocks)} inline script(s) parse")
 
 
+def check_ids():
+    """Every getElementById("x") in the inline JS must have id="x" in the HTML.
+
+    Catches the class of bug node --check cannot: the script parses but dies at
+    runtime because an element was renamed or never emitted.
+    """
+    import re
+    with open(os.path.join(SITE, "index.html"), encoding="utf-8") as f:
+        html = f.read()
+    defined = set(re.findall(r'id="([^"]+)"', html))
+    refs = set(re.findall(r'getElementById\("([^"]+)"\)', html))
+    missing = sorted(refs - defined)
+    assert not missing, f"getElementById refs with no element: {missing}"
+    print(f"  dom: {len(refs)} id refs resolve")
+
+
 def main():
     build_site.build_site()
 
@@ -96,6 +112,7 @@ def main():
     print(f"  demo: {dc}")
 
     check_js()
+    check_ids()
 
     print("test_site OK")
 
