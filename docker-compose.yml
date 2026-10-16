@@ -1,0 +1,12 @@
+services:
+  web:
+    image: yenrosagala/fasih-analytics:latest
+    container_name: fasih-analytics
+    ports:
+      - "8080:8080"
+    volumes:
+      # Host data + config + FASIH session (session files are NOT baked into the image).
+      - ./inputs:/app/inputs
+      # Serve and persist refreshed payloads on the host.
+      - ./outputs:/app/outputs
+    restart: unless-stopped
