@@ -42,12 +42,21 @@ class _RateLimiter:
         self.max_calls = max_calls
         self.period = period
         self._times = []
-        self._lock = asyncio.Lock()
+        self._lock = None
+        self._lock_loop = None
 
     async def acquire(self):
+        loop = asyncio.get_running_loop()
+        if self._lock_loop is not loop:
+            # ponytail: asyncio.Lock binds to the loop that first waits on it and
+            # raises "bound to a different event loop" after; the Streamlit app runs
+            # a fresh loop per asyncio.run(), so swap the lock per loop (the rolling
+            # _times window stays valid -- loop.time() is monotonic across loops).
+            # Upgrade path: one persistent event loop for the whole app.
+            self._lock, self._lock_loop = asyncio.Lock(), loop
         async with self._lock:
             while True:
-                now = asyncio.get_running_loop().time()
+                now = loop.time()
                 self._times = [t for t in self._times if now - t < self.period]
                 if len(self._times) < self.max_calls:
                     self._times.append(now)

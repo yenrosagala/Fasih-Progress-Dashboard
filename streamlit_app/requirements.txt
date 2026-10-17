@@ -1,0 +1,6 @@
+streamlit==1.66.0
+httpx==0.28.1
+pandas==3.0.1
+numpy==2.4.3
+selenium==4.41.0
+webdriver-manager==4.0.2

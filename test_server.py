@@ -452,6 +452,40 @@ def test_summarize():
     print("summarize: ok")
 
 
+def test_cross_loop_locks():
+    """The throttle/limiter locks are module-level, but the Streamlit app calls
+    asyncio.run() per action (fresh loop each time). A lock bound to a previous
+    loop must rebind on a contended acquire instead of raising "bound to a
+    different event loop" -- which killed the second click after a rerun."""
+    import asyncio
+
+    import api_client
+    import data_tab
+
+    async def _throttle_burst():
+        api_client._last_request_at = asyncio.get_running_loop().time()  # force a wait
+        await asyncio.gather(*[api_client._throttle() for _ in range(4)])
+
+    lim = data_tab._ensure_limiter()
+    saved = lim.max_calls, lim.period, lim._times
+
+    async def _limiter_burst():
+        lim.max_calls, lim.period = 1, 0.01   # window full -> holder sleeps in lock
+        lim._times = [asyncio.get_running_loop().time()]
+        await asyncio.gather(*[lim.acquire() for _ in range(2)])
+
+    orig_interval = api_client._REQUEST_INTERVAL
+    api_client._REQUEST_INTERVAL = 0.05
+    try:
+        for _ in range(2):  # second loop is the one that used to explode
+            asyncio.run(_throttle_burst())
+            asyncio.run(_limiter_burst())
+    finally:
+        api_client._REQUEST_INTERVAL = orig_interval
+        lim.max_calls, lim.period, lim._times = saved
+    print("cross-loop locks: ok")
+
+
 if __name__ == "__main__":
     test_cookie()
     test_manifest()
@@ -464,4 +498,5 @@ if __name__ == "__main__":
     test_login()
     test_period_dates()
     test_summarize()
+    test_cross_loop_locks()
     print("test_server OK")

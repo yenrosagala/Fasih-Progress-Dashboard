@@ -8,6 +8,7 @@
   :root{--bg:#0f172a;--card:#1e293b;--line:#334155;--fg:#e2e8f0;--mut:#94a3b8;--acc:#38bdf8;--panel2:#111c30;--hover:#172036;--track:#0b1424;--faint:#64748b}
   html[data-theme="light"]{--bg:#f1f5f9;--card:#ffffff;--line:#e2e8f0;--fg:#0f172a;--mut:#64748b;--acc:#0284c7;--panel2:#f8fafc;--hover:#eef2f7;--track:#e2e8f0;--faint:#94a3b8}
   *{box-sizing:border-box}
+  button,.pick,.filters input,.filters select{transition:border-color .15s ease,color .15s ease,background .15s ease}
   body{margin:0;font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
   header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:12px;align-items:center}
   header h1{margin:0;font-size:18px}
@@ -20,6 +21,16 @@
   .hdr-actions{margin-left:auto;display:flex;gap:10px;align-items:center}
   .hdr-actions .themebtn{margin-left:0}
   .hdr-actions .pngbtn{margin-left:0;margin-bottom:0}
+  .refwrap{position:relative;display:inline-flex}
+  .refpop{position:absolute;top:calc(100% + 6px);right:0;z-index:60;display:none;min-width:250px;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 26px rgba(0,0,0,.35);padding:10px}
+  .refpop.on{display:block}
+  .refpop p{margin:0}
+  .refpop .rftarget{color:var(--mut);font-size:12px;line-height:1.45;margin-bottom:8px}
+  .refpop .rftarget b{color:var(--fg)}
+  .refpop .refgo{width:100%;background:var(--acc);color:#04263a;border:0;border-radius:8px;padding:7px 10px;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+  .refpop .refgo:hover{filter:brightness(1.08)}
+  .refpop .refmsg{margin-top:8px;font-size:12px;color:var(--mut)}
+  .refpop .refmsg.err{color:#E5484D}
   .wrap{padding:16px 20px}
   .cards{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:130px;border-left-width:4px}
@@ -156,7 +167,14 @@
   <span class="gen" id="genlabel"></span>
   <div class="hdr-actions">
     <span class="user" id="userchip" style="display:none"></span>
-    <button id="refresh" class="pngbtn" title="Ambil ulang data periode terpilih dari FASIH" style="display:none">&#8635; Perbarui</button>
+    <span class="refwrap">
+      <button id="refresh" class="pngbtn" title="Perbarui data periode terpilih dari FASIH" style="display:none">&#8635;</button>
+      <div id="refpop" class="refpop" role="menu" aria-label="Perbarui data">
+        <p class="rftarget" id="refpop-target">Mengikuti pilihan Survei/Periode di atas.</p>
+        <button id="refpop-go" class="refgo" role="menuitem">&#8635; Perbarui sekarang</button>
+        <p class="refmsg" id="refpop-msg"></p>
+      </div>
+    </span>
     <button id="setsess" class="pngbtn" title="Atur sesi login FASIH untuk refresh" style="display:none">&#9881; Atur Sesi</button>
     <button id="theme" class="themebtn" title="Ganti tema terang/gelap">&#9728;</button>
     <a id="logout" class="pngbtn" href="/auth/logout" title="Keluar" style="display:none">Keluar</a>
@@ -976,16 +994,17 @@ document.getElementById("wabtn").onclick = async () => {
   finally { btn.disabled = false; btn.textContent = label; }
 };
 
-/* Refresh button: only works when served by the Phase 2 backend (server.py).
-   Static hosting has no api/*, so detection hides the button. */
+/* Refresh button: on the backend it scrapes directly; on static hosting (the
+   Streamlit build) it opens a popup menu that runs the sidebar's own button. */
 let BACKEND = false;
 let AI_ON = false;
 let SESSION_WARN = "";
 const refreshBtn = document.getElementById("refresh");
 const REFRESH_LABEL = "\u21BB Perbarui";
 function refreshVisible(){
-  const show = (BACKEND && (CUR.sid || (META.id && !META.demo))) ? "" : "none";
+  const show = (CUR.sid || (META.id && !META.demo)) ? "" : "none";
   refreshBtn.style.display = show;
+  if (show === "none"){ const p = document.getElementById("refpop"); if (p) p.classList.remove("on"); }
 }
 function setRefresh(t, off){ refreshBtn.classList.toggle("busy", !!off); refreshBtn.textContent = t; refreshBtn.disabled = !!off; }
 const rfov = document.getElementById("rfov");
@@ -1033,7 +1052,56 @@ function setEmptyBusy(b){
   btn.textContent = b ? "Mengambil dari FASIH\u2026" : "Ambil Data dari FASIH";
 }
 document.getElementById("es-go").onclick = scrapePeriod;
-refreshBtn.onclick = scrapePeriod;
+
+/* Popup refresh menu (static hosting). This iframe cannot call Python, so the menu
+   reads ui_state.json -- written by the Streamlit control bar -- to name the period
+   it will scrape, then clicks that fetch button in the parent document (the controls
+   sit on the main screen above this iframe).
+   ponytail: same-origin parent-DOM click, matched by the button label ("data
+   periode"), because no data-testid is needed. Breaks if that label changes;
+   upgrade path: v1 declare_component, so the iframe posts setComponentValue
+   instead of reaching into the parent. */
+const refPop = document.getElementById("refpop");
+const refGo = document.getElementById("refpop-go");
+const refTargetEl = document.getElementById("refpop-target");
+const refMsgEl = document.getElementById("refpop-msg");
+function refOpen(v){
+  const on = v === undefined ? !refPop.classList.contains("on") : !!v;
+  refPop.classList.toggle("on", on);
+  if (!on) return;
+  refMsgEl.textContent = ""; refMsgEl.className = "refmsg";
+  refTargetEl.textContent = "Mengikuti pilihan Survei/Periode di atas.";
+  fetch("ui_state.json", { cache: "no-store" })
+    .then(r => (r.ok ? r.json() : null))
+    .then(j => { if (j && j.label) refTargetEl.innerHTML = (j.saved ? "Perbarui: " : "Ambil: ") + "<b>" + esc(j.label) + "</b>"; })
+    .catch(() => {});
+}
+function refClickControls(){
+  let doc;
+  try { doc = window.parent.document; } catch(e){ return "blocked"; }
+  for (const b of doc.querySelectorAll("button")){
+    if (/data periode/i.test(b.textContent || "")){ b.click(); return true; }
+  }
+  return "missing";
+}
+function refRun(){
+  const r = refClickControls();
+  if (r === true){
+    refMsgEl.className = "refmsg";
+    refMsgEl.textContent = "Menjalankan pengambilan\u2026";
+    setTimeout(() => refOpen(false), 1500);
+    return;
+  }
+  refMsgEl.className = "refmsg err";
+  refMsgEl.textContent = r === "blocked"
+    ? "Iframe tidak boleh membuka halaman induk."
+    : "Tombol perbarui tidak ada di panel kontrol \u2014 cek sesi FASIH, "
+      + "lalu klik tombolnya.";
+}
+refreshBtn.onclick = () => { if (BACKEND) scrapePeriod(); else refOpen(); };
+refGo.onclick = refRun;
+document.addEventListener("click", e => { if (e.target.closest && !e.target.closest(".refwrap")) refOpen(false); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") refOpen(false); });
 
 /* Progress tab: AI summary from pre-aggregated numbers (no per-sample rows). */
 function aiStats(){

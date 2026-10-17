@@ -5,7 +5,8 @@ import random
 import os
 
 _REQUEST_INTERVAL = float(os.getenv("FASIH_REQUEST_INTERVAL", "0"))
-_request_lock = asyncio.Lock()
+_request_lock = None
+_request_lock_loop = None
 _last_request_at = 0.0
 
 # Network-level errors that are safe to retry
@@ -34,13 +35,18 @@ class BotBlockError(RuntimeError):
 
 
 async def _throttle():
-    global _last_request_at
+    global _last_request_at, _request_lock, _request_lock_loop
+    loop = asyncio.get_running_loop()
+    if _request_lock_loop is not loop:
+        # ponytail: per-loop rebind, same reason as data_tab._RateLimiter -- a lock
+        # bound to an earlier asyncio.run() loop raises on a contended acquire.
+        _request_lock, _request_lock_loop = asyncio.Lock(), loop
     async with _request_lock:
-        now = asyncio.get_running_loop().time()
+        now = loop.time()
         wait_for = _REQUEST_INTERVAL - (now - _last_request_at)
         if wait_for > 0:
             await asyncio.sleep(wait_for)
-        _last_request_at = asyncio.get_running_loop().time()
+        _last_request_at = loop.time()
 
 
 def _raise_for_bot_block(response: httpx.Response):

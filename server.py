@@ -590,12 +590,18 @@ async def login_submit(request: Request):
 async def auth_gate(request: Request, call_next):
     path = request.url.path
     if _auth_disabled() or path.startswith("/auth/") or path in ("/healthz", "/login"):
-        return await call_next(request)
-    if not current_user(request):
+        resp = await call_next(request)
+    elif not current_user(request):
         if path.startswith("/api/"):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return RedirectResponse("/login")
-    return await call_next(request)
+    else:
+        resp = await call_next(request)
+    # no Cache-Control on JSON/FileResponse lets browsers heuristically cache
+    # /data for minutes (Last-Modified/ETag only) -> after a scrape the SPA's
+    # re-fetch hit the disk cache and showed stale rows. no-store everywhere.
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 os.makedirs(SITE_DIR, exist_ok=True)

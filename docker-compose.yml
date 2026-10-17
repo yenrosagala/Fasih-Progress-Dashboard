@@ -20,4 +20,8 @@ services:
       # AI backend (OpenRouter), never per-sample rows.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODELS: ${OPENROUTER_MODELS:-openai/gpt-4o-mini}
+      # Space every FASIH request by this many seconds so parallel region tasks
+      # don't burst and trip FASIH's 429 throttle (the retry backoff froze the
+      # progress bar for minutes). The 18-req/min limiter still applies on top.
+      FASIH_REQUEST_INTERVAL: ${FASIH_REQUEST_INTERVAL:-0.8}
     restart: unless-stopped

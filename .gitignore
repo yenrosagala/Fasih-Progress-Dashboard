@@ -1,5 +1,8 @@
 outputs/*
 !outputs/site/
+outputs/site/data/
+outputs/site/surveys.json
+outputs/site/ui_state.json
 !outputs/csv/
 outputs/csv/*
 !outputs/csv/survey_collection_deadline_adjusted.csv
@@ -12,5 +15,7 @@ __pycache__/
 .DS_Store
 .env
 .claude/
+.streamlit/secrets.toml
+streamlit_app/static/
 .Rhistory
 .Rproj.user/
