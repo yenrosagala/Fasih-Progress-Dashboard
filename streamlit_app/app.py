@@ -55,7 +55,7 @@ from config import (  # noqa: E402
     survey_datatable_url,
     surveys_base_url,
 )
-from importer import load_session, save_manual_session, session_valid  # noqa: E402
+from importer import load_session, save_manual_session, session_probe  # noqa: E402
 
 MANUAL_SESSION = ROOT / "inputs" / "manual_session.json"
 
@@ -125,9 +125,12 @@ def _headers_cookies():
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _session_ok(blob):
+def _session_state(blob):
+    """(ok, reason) for the current session; reason is shown when it is invalid."""
     cookies, csrf = load_session()
-    return bool(cookies and csrf) and session_valid(cookies, csrf)
+    if not (cookies and csrf):
+        return False, ""
+    return session_probe(cookies, csrf)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -271,7 +274,7 @@ def _controls(blob):
         has_session = True
     except RuntimeError:
         has_session = False
-    ok = has_session and _session_ok(blob)
+    ok, reason = _session_state(blob) if has_session else (False, "")
     _cookie_panel(ok)
     if not has_session:
         st.warning(
@@ -281,8 +284,9 @@ def _controls(blob):
         return
     if not ok:
         st.error(
-            "Sesi FASIH tidak valid atau sudah kedaluwarsa \u2014 tempel cookie baru "
-            "di panel di atas, lalu muat ulang halaman."
+            f"Sesi FASIH tidak valid atau sudah kedaluwarsa "
+            f"(status: {reason or 'n/a'}) \u2014 tempel cookie baru di panel di atas, "
+            "lalu muat ulang halaman."
         )
         return
     try:

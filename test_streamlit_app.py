@@ -73,6 +73,7 @@ def _load_app(clear_login=True):
     fake_importer = types.ModuleType("importer")
     fake_importer.load_session = lambda: (None, None)
     fake_importer.session_valid = lambda *a: False
+    fake_importer.session_probe = lambda *a: (False, "")
     fake_importer.save_manual_session = lambda *a, **kw: None
     fake_importer.get_cookies_and_csrf = lambda *a, **kw: (None, None)
     sys.modules["importer"] = fake_importer
@@ -118,7 +119,7 @@ def main():
 
     # Controls live on the main screen: give the app a happy session and re-run it.
     _mod._headers_cookies = lambda: None
-    _mod._session_ok = lambda blob: True
+    _mod._session_state = lambda blob: (True, "")
     _mod._surveys = lambda blob: [{"id": "s1", "name": "Survei Uji"}]
     _mod._periods = lambda blob, sid: [
         {"id": "p1", "name": "Januari", "startDate": "2026-01-01", "endDate": "2026-01-31"}

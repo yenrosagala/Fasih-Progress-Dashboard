@@ -97,7 +97,8 @@ def _load_env_session():
         return None, None
 
 
-def _session_valid(cookies_dict, csrf_token):
+def _session_check(cookies_dict, csrf_token):
+    """Probe FASIH once. Returns (ok, note); note is a short reason for logs/UI."""
     from config import BASE_HEADERS
     headers = {
         **BASE_HEADERS,
@@ -118,11 +119,15 @@ def _session_valid(cookies_dict, csrf_token):
                 "   BPS/FASIH returned a bot-detection page. "
                 "Stop running the script and check access manually in a normal browser."
             )
-            return False
-        return response.status_code == 200
+            return False, "bot-page"
+        return response.status_code == 200, str(response.status_code)
     except Exception as e:
         print(f"   Session check failed ({type(e).__name__}): {e}")
-        return False
+        return False, type(e).__name__
+
+
+def _session_valid(cookies_dict, csrf_token):
+    return _session_check(cookies_dict, csrf_token)[0]
 
 
 def load_session():
@@ -146,6 +151,12 @@ def load_session():
 def session_valid(cookies, csrf):
     """Cheap FASIH reachability/auth probe. Returns bool."""
     return _session_valid(cookies, csrf) if (cookies and csrf) else False
+
+
+def session_probe(cookies, csrf):
+    """(ok, note) — like session_valid(), but carries a short reason for the UI
+    ('200', '401', 'bot-page', 'ConnectError', or '' when there is no session)."""
+    return _session_check(cookies, csrf) if (cookies and csrf) else (False, "")
 
 
 def get_cookies_and_csrf():
