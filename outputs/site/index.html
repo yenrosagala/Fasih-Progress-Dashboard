@@ -43,10 +43,26 @@
   .card .s{color:var(--mut);font-size:16px;margin-top:2px}
   .kbar{height:4px;border-radius:2px;background:var(--line);margin-top:6px;overflow:hidden}
   .kbar i{display:block;height:100%;border-radius:2px}
-  .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-  .filters input,.filters select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:140px}
-  .filters input{min-width:240px}
-  .filters button{background:var(--acc);color:#04263a;border:0;border-radius:8px;padding:7px 14px;font-weight:600;cursor:pointer}
+  .filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px;font-size:14px}
+.filters input:not([type=checkbox]),.filters select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:140px}
+.filters input:not([type=checkbox]){min-width:240px}
+.fsel{position:relative}
+.fsel>summary{list-style:none;cursor:pointer;display:flex;align-items:center;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 32px 7px 10px;min-width:180px;position:relative}
+.fsel>summary::-webkit-details-marker{display:none}
+.fsel>summary::after{content:"\25be";position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--mut);font-size:.75em;line-height:1;transition:transform .15s ease}
+.fsel>summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.fsel[open]>summary{border-color:var(--acc)}
+.fsel[open]>summary::after{transform:translateY(-50%) rotate(180deg)}
+.fsel .fopts{position:absolute;left:0;top:calc(100% + 6px);z-index:30;display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px;box-shadow:var(--sh);min-width:min(360px,calc(100vw - 24px));max-width:min(560px,calc(100vw - 24px));max-height:min(60vh,340px);overflow:auto;overscroll-behavior:contain}
+.fsel .fopts label{display:flex;align-items:flex-start;gap:6px;padding:6px 8px;border-radius:8px;cursor:pointer;line-height:1.5;font-size:1em}
+.fsel .fopts label:hover{background:var(--hover)}
+.fsel .fopts label:has(input:checked){background:var(--panel2);color:var(--acc)}
+.fsel .fopts input{flex:0 0 auto;width:12px;height:12px;margin:4px 0 0;accent-color:var(--acc)}
+.fsel .fopts input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+@media (pointer:coarse){.fsel .fopts label{padding:12px 10px}}
+@media (max-width:640px){.fsel .fopts{left:0;right:auto;width:calc(100vw - 32px);min-width:0;max-width:none}}
+@media (prefers-reduced-motion:reduce){.fsel>summary::after{transition:none}}
+  .filters button{font:inherit;background:var(--acc);color:#04263a;border:0;border-radius:8px;padding:7px 14px;font-weight:600;cursor:pointer}
   .tabs{display:flex;gap:6px;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--line)}
   .tab{background:transparent;border:0;color:var(--mut);padding:8px 18px;cursor:pointer;font-weight:600;font-size:19px;border-bottom:2px solid transparent}
   .tab:hover{color:var(--fg)}
@@ -355,7 +371,7 @@
 /* ---------- adaptive schema: everything below is set per survey ---------- */
 let COLUMNS = [], DATA = [], META = {}, LABEL = {};
 let STATUS_DEF = [], STATUS = {}, STATUS_ORDER = [], SUBMIT_KEYS = [], FINAL_KEYS = [];
-let FILTER_KEYS = [], CHARTS = [];
+let FILTER_KEYS = [], MULTI_KEYS = [], CHARTS = [];
 let state = { q:"", page:0, pageSize:100, sort:{key:null, dir:1}, filters:{} };
 let CUR = { sid:"", pid:"", periods:[] };  // current survey + period (on-demand backend flow)
 
@@ -426,27 +442,35 @@ function buildCharts(){
 }
 
 function computeFilterKeys(){
-  const kept = [];
+  const kept = [], multi = [];
   for (const c of COLUMNS){
     const k = c.key;
     if (NO_FILTER.has(k)) continue;
     const seen = new Set();
+    let numbered = true;
     for (const r of DATA){
       const v = val(r,k);
-      if (v !== "") seen.add(v);
+      if (v !== ""){ seen.add(v); if (!/^\d+\.\s/.test(String(v))) numbered = false; }
       if (seen.size > MAX_FILTER_DISTINCT) break;
     }
-    if (seen.size >= 2 && seen.size <= MAX_FILTER_DISTINCT) kept.push({ k, n:seen.size });
+    if (seen.size >= 2 && seen.size <= MAX_FILTER_DISTINCT){
+      kept.push({ k, n:seen.size });
+      /* Enumerated options ("1. Berhasil diwawancarai", "5. Bukan usaha pertanian",
+         "6. Pindah keluar SLS"...) are pick-one-or-many. The column key differs per
+         survey (data9, data10...), so detect by value shape, not by name. */
+      if (numbered) multi.push(k);
+    }
   }
   const prio = k => { const i = PREFERRED_FILTERS.indexOf(k); return i === -1 ? 1e3 : i; };
   kept.sort((a,b) => prio(a.k) - prio(b.k) || a.n - b.n || a.k.localeCompare(b.k));
-  return kept.map(x => x.k);
+  return { keys: kept.map(x => x.k), multi };
 }
 
 function matches(r, skip){
   for (const k of FILTER_KEYS){
     if (k === skip) continue;
-    if (state.filters[k] && String(val(r,k)) !== state.filters[k]) return false;
+    const f = state.filters[k];
+    if (f && f.length && !f.includes(String(val(r,k)))) return false;
   }
   if (state.q){
     const s = state.q.toLowerCase();
@@ -465,6 +489,8 @@ function distinctOptions(key){
   return [...set].sort();
 }
 
+function multiSummary(k){ const n = (state.filters[k] || []).length; return n ? (LABEL[k] || k) + " (" + n + ")" : "Semua " + (LABEL[k] || k); }
+
 function buildFilterUI(){
   const box = document.getElementById("filters");
   box.innerHTML = "";
@@ -474,14 +500,29 @@ function buildFilterUI(){
   search.oninput = () => { state.q = search.value; state.page = 0; apply(); };
   box.appendChild(search);
   for (const k of FILTER_KEYS){
+    /* Enumerated columns (Hasil Pendataan, ...) are pick-one-or-many: a checkbox
+       dropdown instead of a <select multiple>, which needs an undiscoverable
+       Ctrl/Cmd-click. */
+    if (MULTI_KEYS.includes(k)){
+      const det = document.createElement("details");
+      det.className = "fsel";
+      det.dataset.key = k;
+      det.innerHTML = '<summary></summary><div class="fopts"></div>';
+      det.querySelector(".fopts").onchange = () => {
+        state.filters[k] = [...det.querySelectorAll(".fopts input:checked")].map(i => i.value);
+        state.page = 0; apply();
+      };
+      box.appendChild(det);
+      continue;
+    }
     const sel = document.createElement("select");
     sel.dataset.key = k;
-    sel.onchange = () => { state.filters[k] = sel.value; state.page = 0; apply(); };
+    sel.onchange = () => { state.filters[k] = sel.value ? [sel.value] : []; state.page = 0; apply(); };
     box.appendChild(sel);
   }
   const reset = document.createElement("button");
   reset.textContent = "Reset";
-  reset.onclick = () => { FILTER_KEYS.forEach(k => state.filters[k] = ""); state.q = ""; state.page = 0;
+  reset.onclick = () => { FILTER_KEYS.forEach(k => state.filters[k] = []); state.q = ""; state.page = 0;
     document.querySelector(".filters input").value = ""; apply(); };
   box.appendChild(reset);
 }
@@ -490,10 +531,20 @@ function refreshSelects(){
   document.querySelectorAll(".filters select").forEach(sel => {
     const k = sel.dataset.key;
     const opts = distinctOptions(k);
-    const cur = state.filters[k];
-    if (cur && !opts.includes(cur)) state.filters[k] = cur = "";
+    const cur = state.filters[k] || [];
     sel.innerHTML = '<option value="">Semua ' + esc(LABEL[k] || k) + "</option>" +
-      opts.map(o => '<option value="' + esc(o) + '"' + (o === cur ? " selected" : "") + ">" + esc(o) + "</option>").join("");
+      opts.map(o => '<option value="' + esc(o) + '"' + (cur.includes(o) ? " selected" : "") + ">" + esc(o) + "</option>").join("");
+  });
+  document.querySelectorAll(".filters details.fsel").forEach(det => {
+    const k = det.dataset.key;
+    det.querySelector("summary").textContent = multiSummary(k);
+    if (det.open) return;  // leave an open menu (and its ticks) alone while it's in use
+    const opts = distinctOptions(k);
+    let cur = state.filters[k] || [];
+    const valid = cur.filter(v => opts.includes(v));
+    if (valid.length !== cur.length) state.filters[k] = cur = valid;
+    det.querySelector(".fopts").innerHTML = opts.map(o =>
+      '<label><input type="checkbox" value="' + esc(o) + '"' + (cur.includes(o) ? " checked" : "") + ">" + esc(o) + "</label>").join("");
   });
 }
 
@@ -774,6 +825,11 @@ function apply(){
   renderTable();
 }
 
+/* Close an open multi-select dropdown when clicking anywhere outside it. */
+document.addEventListener("click", e => {
+  document.querySelectorAll(".filters details.fsel[open]").forEach(d => { if (!d.contains(e.target)) d.open = false; });
+});
+
 /* ---------------- boot / step-by-step wizard ---------------- */
 
 let STEP = 1;
@@ -803,10 +859,11 @@ function applySurvey(s){
   SUBMIT_KEYS = s.submitKeys || ["submitted","approved","final"];
   FINAL_KEYS = s.finalKeys || ["final"];
   LABEL = {}; COLUMNS.forEach(c => LABEL[c.key] = c.label);
-  FILTER_KEYS = computeFilterKeys();
+  const fk = computeFilterKeys();
+  FILTER_KEYS = fk.keys; MULTI_KEYS = fk.multi;
   buildCharts();
   state = { q:"", page:0, pageSize:state.pageSize || 100, sort:{key:null, dir:1}, filters:{} };
-  FILTER_KEYS.forEach(k => state.filters[k] = "");
+  FILTER_KEYS.forEach(k => state.filters[k] = []);
 
   document.getElementById("title").textContent = s.name || "Dashboard Sampel FASIH";
   document.getElementById("genlabel").textContent = "Diperbarui: " + (s.generated || "-");
@@ -1230,7 +1287,7 @@ function aiStats(){
     provinsi_submit_tertinggi: byPct(provs).slice(0, 5).map(row),
     provinsi_submit_terendah: byPct(provs).slice(-5).reverse().map(row),
     kab_prioritas: kabs.slice().sort((a,b) => (b.total - submitUp(b)) - (a.total - submitUp(a))).slice(0, 10).map(row),
-    filter_aktif: Object.entries(state.filters || {}).filter(e => e[1]).map(e => e[0] + "=" + e[1]),
+    filter_aktif: Object.entries(state.filters || {}).filter(e => [].concat(e[1]).length).map(e => e[0] + "=" + [].concat(e[1]).join(",")),
   };
 }
 
