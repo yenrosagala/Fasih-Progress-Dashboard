@@ -154,3 +154,39 @@ Image hanya memasang `requirements-server.txt` (runtime server). `requirements.t
 - **Sesi FASIH.** Tidak ikut ke image dan cepat kedaluwarsa. Ada dua cara menyetel: (1) dari **UI** — buka dashboard, klik **Atur Sesi**, tempel header `Cookie` dari FASIH (ada instruksi di dialognya) — sesi disimpan ke `inputs/manual_session.json` di server dan langsung dipakai tanpa restart; (2) dari **server** — setel `FASIH_SESSION` (atau mount `inputs/manual_session.json`) lalu restart. Perbarui berkala saat kedaluwarsa (banner di dashboard akan mengingatkan).
 - **Ephemeral & sesi dari UI.** Pada filesystem ephemeral (tanpa volume), sesi yang diset lewat UI juga hilang saat container restart; setel ulang lewat UI atau pakai `FASIH_SESSION` agar permanen.
 - Mendukung Fly.io, Render, Railway, dan VPS — arahkan ke Dockerfile ini.
+
+## Streamlit Cloud + browser bridge
+
+Cloud **tidak pernah** menyimpan cookie FASIH. Sesi diambil di mesin lokal dari
+Chrome yang sudah login (lewat CDP), data hasil scrape dikirim ke repo data privat,
+dan Cloud hanya menyajikan data itu (mode viewer read-only).
+
+1. **Jalankan Chrome bridge** (sekali): double-click `start_bridge.cmd`. Jendela
+   Chrome baru terbuka dengan remote debugging (port 9222) dan profil tersendiri —
+   login FASIH di jendela itu; login tersimpan untuk seterusnya.
+2. **Scrape lokal**: jalankan `python main.py` seperti biasa. CLI
+   (`get_cookies_and_csrf`) mencoba bridge **otomatis** sebelum jatuh ke login
+   Selenium manual — begitu Chrome bridge valid, tidak ada login ulang. (Dashboard
+   Docker/`server.py` memakai `load_session()`, jadi set `FASIH_BRIDGE=1` bila ingin
+   tombol refresh di sana juga ambil sesi dari bridge.) Sesi lalu di-cache ke
+   `inputs/manual_session.json`.
+3. **Publish data**: `python publish_data.py` menyalin `outputs/site` (`surveys.json`
+   + `data/*.json`) ke repo data privat (satu commit, force-push — repo data tidak
+   ikut membengkak).
+4. **Cloud**: isi secrets `DATA_REPO` + `DATA_TOKEN` lewat **Settings → Secrets**.
+   Saat keduanya ada, app jadi viewer: `_sync_data()` menarik blob dari repo privat
+   ke folder yang disajikan, dan UI scrape (pilih survei/periode, tombol ambil data)
+   tidak dirender. Tanpa secrets itu, app berperilaku seperti sebelumnya (scrape live).
+
+| Secret | Isi |
+|---|---|
+| `DATA_REPO` | `yenrosagala/fasih-data` (repo **privat**, data-only). |
+| `DATA_TOKEN` | Fine-grained PAT, **Contents: read-only** untuk repo data itu. |
+
+Catatan privasi: repo kode ini publik dan hanya menyajikan dashboard; sampel
+berisi PII hanya hidup di repo data privat, tidak pernah masuk repo publik.
+
+Untuk memperbarui data di Cloud: ulangi langkah 1–3 (sesi diperbarui otomatis;
+tidak ada cookie yang ditempel atau di-renew manual). Cache viewer 60 detik, jadi
+Cloud menampilkan versi terbaru dalam ~1 menit.
+

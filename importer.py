@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import urllib.request
 import httpx
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -97,6 +98,109 @@ def _load_env_session():
         return None, None
 
 
+def _cdp_call(ws_url, method, timeout=5):
+    """One-shot Chrome DevTools Protocol request; returns the result dict."""
+    import websocket  # websocket-client, already a selenium dependency
+
+    # Chrome 111+ rejects a CDP websocket whose Origin isn't allow-listed; dropping
+    # the Origin header sidesteps --remote-allow-origins entirely.
+    ws = websocket.create_connection(ws_url, timeout=timeout, suppress_origin=True)
+    try:
+        ws.send(json.dumps({"id": 1, "method": method}))
+        while True:
+            msg = json.loads(ws.recv())
+            if msg.get("id") == 1:
+                return msg.get("result") or {}
+    finally:
+        ws.close()
+
+
+def _cookies_from_cdp(raw):
+    """Keep only bps.go.id cookies from a CDP cookie list, and pull the XSRF token."""
+    cookies = {
+        c["name"]: c["value"]
+        for c in raw
+        if (c.get("domain") or "").lstrip(".") == "bps.go.id"
+        or (c.get("domain") or "").lstrip(".").endswith(".bps.go.id")
+    }
+    return cookies, _csrf_from_cookies(cookies)
+
+
+def _hosted_bridge_session():
+    """Read the FASIH session from a hosted bridge server over HTTPS.
+
+    Contract (reverse-engineered from the live service; the token comes from the
+    bridge operator — see README/notes, tokens are never guessed):
+
+        GET {FASIH_BRIDGE_URL}/status
+        Header: X-Bridge-Token: {FASIH_BRIDGE_TOKEN}
+        -> 200 JSON shaped like inputs/manual_session.json
+           ({cookies} or {cookie_header}, csrf_token optional)
+
+    Returns (cookies, csrf) or (None, None); never raises, so callers fall
+    through to the local CDP bridge / manual/cache. Both env vars must be set.
+    """
+    base = (os.getenv("FASIH_BRIDGE_URL") or "").rstrip("/")
+    token = os.getenv("FASIH_BRIDGE_TOKEN")
+    if not base or not token:
+        return None, None
+    try:
+        req = urllib.request.Request(
+            base + "/status",
+            headers={"X-Bridge-Token": token, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read())
+    except Exception:
+        return None, None
+    return _parse_session_blob(data if isinstance(data, dict) else {})
+
+
+def browser_session(port=None, host="127.0.0.1"):
+    """The "browser bridge": read live FASIH cookies without pasting them.
+
+    Tries the hosted HTTPS bridge (FASIH_BRIDGE_URL + FASIH_BRIDGE_TOKEN) first —
+    it needs no local browser, so it works on a server. Otherwise falls back to a
+    running Chrome over CDP (--remote-debugging-port, see start_bridge.cmd).
+    Returns (cookies, csrf), or (None, None) when neither bridge yields cookies.
+
+    ponytail: Network.getAllCookies is CDP-deprecated but still shipped and needs no
+    target bookkeeping; swap for Storage.getCookies (the browser-target fallback
+    below already uses it) if it ever disappears.
+    """
+    host_cookies, host_csrf = _hosted_bridge_session()
+    if host_cookies:
+        return host_cookies, host_csrf
+
+    port = int(port or os.getenv("FASIH_CDP_PORT") or 9222)
+    base = f"http://{host}:{port}"
+
+    def _get(path):
+        with urllib.request.urlopen(base + path, timeout=2) as r:
+            return json.loads(r.read())
+
+    try:
+        pages = [t for t in _get("/json") if t.get("type") == "page"]
+    except Exception:
+        return None, None
+
+    raw = []
+    for t in pages:  # any page target exposes every browser cookie
+        try:
+            raw = _cdp_call(t["webSocketDebuggerUrl"], "Network.getAllCookies").get("cookies") or []
+            break
+        except Exception:
+            continue
+    if not raw:  # headless / no page open: the browser target still has them
+        try:
+            raw = _cdp_call(_get("/json/version").get("webSocketDebuggerUrl"), "Storage.getCookies").get("cookies") or []
+        except Exception:
+            return None, None
+
+    cookies, csrf = _cookies_from_cdp(raw)
+    return (cookies, csrf) if cookies else (None, None)
+
+
 def _session_check(cookies_dict, csrf_token):
     """Probe FASIH once. Returns (ok, note); note is a short reason for logs/UI."""
     from config import BASE_HEADERS
@@ -142,6 +246,10 @@ def load_session():
     cookies, csrf = _load_env_session()
     if cookies and csrf:
         return cookies, csrf
+    if os.getenv("FASIH_BRIDGE") or os.getenv("FASIH_BRIDGE_URL"):
+        cookies, csrf = browser_session()
+        if cookies and csrf:
+            return cookies, csrf
     cookies, csrf = _load_manual_session()
     if cookies and csrf:
         return cookies, csrf
@@ -176,6 +284,14 @@ def get_cookies_and_csrf():
             print("✅ Cached session valid, skipping login.\n")
             return cookies, csrf_token
         print("⚠️  Cached session expired, re-logging in...\n")
+
+    print("🌉 Checking browser bridge (Chrome --remote-debugging-port)...")
+    bridge_cookies, bridge_csrf = browser_session()
+    if bridge_cookies and bridge_csrf and _session_valid(bridge_cookies, bridge_csrf):
+        print("✅ Browser bridge session valid.\n")
+        _save_session(bridge_cookies, bridge_csrf)
+        return bridge_cookies, bridge_csrf
+    print("⚠️  Browser bridge unavailable or invalid; falling back to manual login.\n")
 
     options = webdriver.ChromeOptions()
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)

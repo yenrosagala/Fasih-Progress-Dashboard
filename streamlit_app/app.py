@@ -4,6 +4,11 @@ Streamlit owns the FASIH session (a secret), scrapes one survey period on demand
 and serves the existing static dashboard from streamlit_app/static/site/ so the SPA
 resolves its JSON with plain relative URLs -- no backend, no CORS, no shim.
 
+Read-only viewer mode: when DATA_REPO + DATA_TOKEN are set (Cloud), the app skips
+scraping entirely and downloads the data the local browser bridge pushed to a private
+GitHub repo (publish_data.py), so Cloud needs no FASIH cookie. Without those secrets
+(local runs) the pickers + fetch button scrape live as before.
+
 Login is the same knobs as server.py: LOGIN_USER + LOGIN_PASSWORD (process env, or
 st.secrets on Cloud). The gate code is kept but currently skipped (SHOW_LOGIN=False),
 so the form never shows; flip the constant to gate the app again. The FASIH cookie is
@@ -25,6 +30,7 @@ Streamlit unauthenticated, so keep a Cloud app with PII private.
 """
 
 import asyncio
+import base64
 import hmac
 import json
 import os
@@ -33,6 +39,7 @@ import sys
 import time
 from pathlib import Path
 
+import httpx
 import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
@@ -191,6 +198,37 @@ def _publish():
     shutil.copytree(SITE_SRC, SITE_DST)
 
 
+def _data_source():
+    """(repo, token) for the private pre-scraped data repo, or (None, None).
+
+    When set, the app is a read-only viewer: the local browser bridge scrapes and
+    pushes data here (publish_data.py), and Cloud just serves it -- so Cloud never
+    needs a FASIH cookie of its own.
+    """
+    repo, token = _secret("DATA_REPO"), _secret("DATA_TOKEN")
+    return (repo, token) if (repo and token) else (None, None)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _sync_data(repo, token):
+    """Download surveys.json + data/*.json from a private GitHub repo into the
+    served folder. Returns the number of files mirrored."""
+    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    api = f"https://api.github.com/repos/{repo}"
+    branch = httpx.get(api, headers=hdr, timeout=30).json().get("default_branch", "main")
+    tree = httpx.get(f"{api}/git/trees/{branch}?recursive=1", headers=hdr, timeout=60).json()
+    blobs = [
+        e for e in tree.get("tree", [])
+        if e.get("type") == "blob" and e["path"].endswith(".json")
+    ]
+    for e in blobs:
+        blob = httpx.get(f"{api}/git/blobs/{e['sha']}", headers=hdr, timeout=120).json()
+        dst = SITE_DST / e["path"]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(base64.b64decode(blob["content"]))
+    return len(blobs)
+
+
 def _embed():
     html = (SITE_DST / "index.html").read_text(encoding="utf-8")
     # A srcdoc document has no URL of its own, so <base> re-points the SPA's
@@ -215,6 +253,8 @@ def _run_scrape(survey_id, period):
             st.error(str(e))
             return
         box.update(label=f"{n:,} baris \u00b7 {name}", state="complete")
+    # Mark only on success (a failed scrape returns above), so the visitor can retry.
+    st.session_state.setdefault("scraped", {})[period["id"]] = survey_id
     _publish()
     st.rerun()
 
@@ -323,14 +363,22 @@ def _controls(blob):
         period = periods[j]
         payload = SITE_SRC / "data" / f"{period['id']}.json"
         saved = payload.exists()
+        already = st.session_state.setdefault("scraped", {}).get(period["id"]) == survey_id
         _write_ui_state(f"{surveys[i]['name']} \u00b7 {_label(period)}", saved)
         with action:
             if st.button(
-                "Muat ulang data periode ini" if saved else "Ambil data periode ini",
+                "Data periode ini sudah diambil" if already
+                else ("Muat ulang data periode ini" if saved else "Ambil data periode ini"),
                 type="primary",
                 use_container_width=True,
             ):
-                _run_scrape(survey_id, period)
+                if already:
+                    st.info(
+                        "Data periode ini sudah diambil pada sesi ini \u2014 tidak diambil "
+                        "ulang. Muat ulang halaman untuk mengambil lagi."
+                    )
+                else:
+                    _run_scrape(survey_id, period)
     if saved:
         when = time.strftime("%d/%m %H:%M", time.localtime(payload.stat().st_mtime))
         st.caption(f"Data tersimpan \u00b7 diambil {when} \u00b7 tombol \u21bb di dashboard memakai pilihan ini.")
@@ -393,6 +441,16 @@ transition:border-color .15s ease,color .15s ease,background .15s ease}
     )
     if SHOW_LOGIN and not _gate():
         return  # no publish, no controls, no iframe until logged in
+    repo, token = _data_source()
+    if repo and token:
+        _publish()  # the SPA shell (index.html) still comes from the repo
+        try:
+            n = _sync_data(repo, token)
+            st.caption(f"{n} berkas data dari repositori privat \u00b7 {repo}")
+        except Exception as e:
+            st.error(f"Gagal menyinkronkan data: {e}")
+        _embed()
+        return
     blob = _session_blob()
     _publish()
     _controls(blob)

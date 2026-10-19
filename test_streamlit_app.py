@@ -135,6 +135,40 @@ def main():
     (SITE_DST / "ui_state.json").unlink(missing_ok=True)  # written by this run
     print("ok: cookie/survei/periode controls render on the main screen (sidebar unused, hidden)")
 
+    # Session guard: a period already taken this visit must not be scraped again.
+    mod3, seen3 = _load_app()
+    mod3._headers_cookies = lambda: None
+    mod3._session_state = lambda blob: (True, "")
+    mod3._surveys = lambda blob: [{"id": "s1", "name": "Survei Uji"}]
+    mod3._periods = lambda blob, sid: [
+        {"id": "p1", "name": "Januari", "startDate": "2026-01-01", "endDate": "2026-01-31"}
+    ]
+    mod3.st.session_state["scraped"] = {"p1": "s1"}  # the visitor already took p1
+    mod3.st.button = lambda label, **kw: (
+        seen3.setdefault("buttons", []).append(label) or "data periode" in label.lower()
+    )
+    mod3.st.info = lambda msg, **kw: seen3.update(info=msg)
+    scraped = []
+    mod3._run_scrape = lambda sid, p: scraped.append(sid)
+    mod3.main()
+    assert any("sudah diambil" in b.lower() for b in seen3.get("buttons", [])), \
+        f"already-taken period must be relabelled, buttons={seen3.get('buttons')}"
+    assert not scraped, "an already-taken period must not be scraped again this visit"
+    assert seen3.get("info"), "the guard must tell the visitor the period was already taken"
+    (SITE_DST / "ui_state.json").unlink(missing_ok=True)  # written by this run
+    print("ok: session guard skips re-scraping a period already taken this visit")
+
+    # Viewer mode: DATA_REPO + DATA_TOKEN set -> serve pushed data, no scrape UI.
+    mod2, seen2 = _load_app()
+    mod2._secret = lambda n, d="": {"DATA_REPO": "me/fasih-data", "DATA_TOKEN": "tok"}.get(n, d)
+    mod2._sync_data = lambda repo, token: 3
+    mod2.main()
+    assert seen2.get("iframe"), "viewer mode must still embed the SPA"
+    assert not seen2.get("selects"), f"viewer mode must not render pickers: {seen2.get('selects')}"
+    assert not [b for b in seen2.get("buttons", []) if "data periode" in b.lower()], \
+        "viewer mode must not show the fetch button"
+    print("ok: viewer mode (DATA_REPO/DATA_TOKEN) serves pushed data, skips scrape controls")
+
     # Gate kept but skipped: creds set, default SHOW_LOGIN=False -> app runs,
     # while _gate() itself must still block when called.
     os.environ["LOGIN_USER"], os.environ["LOGIN_PASSWORD"] = "tester", "s3cret"
