@@ -3,6 +3,7 @@ import json
 import os
 
 import pandas as pd
+from config import KAB_NAME_OVERRIDES
 
 from api_client import get_requests, post_requests
 from config import (
@@ -140,6 +141,10 @@ def flatten_row(row, survey_name, period_name=""):
         "latitude": row.get("latitude"),
         "longitude": row.get("longitude"),
     }
+    # Ponytail: override kab name for specific codes to keep display consistent
+    # across data refreshes; add new codes to KAB_NAME_OVERRIDES in config.py.
+    if rec["kab_code"] in KAB_NAME_OVERRIDES:
+        rec["kab"] = KAB_NAME_OVERRIDES[rec["kab_code"]]
     for k in row:
         if k.startswith("data") and k[4:].isdigit():
             rec[k] = row.get(k)

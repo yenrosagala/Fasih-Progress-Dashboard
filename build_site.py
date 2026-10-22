@@ -14,7 +14,7 @@ import json
 import os
 import zlib
 
-from config import data_column_labels_by_survey
+from config import KAB_NAME_OVERRIDES, data_column_labels_by_survey
 
 DATA_JSON = "outputs/data_sample.json"
 SURVEY_CFG = "inputs/survey_config.json"
@@ -136,6 +136,15 @@ def _load_cfg():
 
 def write_payload(sid, name, stype, rows, generated, period, demo=False):
     """Write one survey payload to data/<sid>.json; returns it."""
+    # Every payload writer (server refresh, rebuild, streamlit) passes through
+    # here, so kab label overrides hold even for writers that forget them.
+    # ponytail: a config.py edit still needs one process restart (Python binds
+    # imports at start); upgrade = re-read the table per call if it must change
+    # while the server runs.
+    for r in rows:
+        k = str(r.get("kab_code") or "")
+        if k in KAB_NAME_OVERRIDES:
+            r["kab"] = KAB_NAME_OVERRIDES[k]
     payload = _payload(sid, name, stype, rows, generated, period, demo)
     _write(os.path.join(SITE_DIR, "data", f"{sid}.json"), payload)
     return payload
@@ -180,6 +189,16 @@ def build_site():
         sid = s.get("surveyPeriodId")
         if not sid:
             continue
+        # ponytail: a single-survey refresh (server.py) stamps payload.generated
+        # newer than the base data_sample; never let a base rebuild clobber fresh
+        # rows (that turned SITASI progress to 0). Ceiling = lexicographic compare
+        # of %Y%m%d_%H%M%S stamps; upgrade = per-row merge in write_payload if a
+        # rebuild must combine base + fresh rows instead of choosing one.
+        prev = os.path.join(SITE_DIR, "data", f"{sid}.json")
+        if os.path.exists(prev):
+            with open(prev, encoding="utf-8") as f:
+                if (json.load(f).get("generated") or "") > generated:
+                    continue
         rows = [r for r in all_rows if r.get("name") == s.get("name")]
         period = {"start": s.get("surveyPeriodStartDate", ""), "end": s.get("surveyPeriodEndDate", "")}
         write_payload(sid, s.get("name", ""), s.get("type", ""), rows, generated, period)
@@ -289,7 +308,14 @@ _SHELL = r"""<!DOCTYPE html>
   .panel{display:none}
   .panel.active{display:block}
   .tblwrap{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:10px}
-  table{border-collapse:collapse;width:100%;font-size:18px;white-space:nowrap}
+  #ptable thead th{position:sticky;top:0;background:var(--card);border-bottom:2px solid var(--line);z-index:1;white-space:normal}
+  #ptable td{text-align:right}
+  #ptable td.nm{text-align:left}
+  #ptable th{text-align:center}
+  #ptable .sec .tblwrap{border:none;border-radius:0;box-shadow:none}
+  #ptable tbody tr:nth-child(even){background:var(--hover)}
+  #ptable tbody tr:hover{background:var(--line)}
+  table{border-collapse:collapse;width:100%;font-size:18px;white-space:nowrap;font-variant-numeric:tabular-nums}
   th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left}
   th{position:sticky;top:0;background:var(--panel2);cursor:pointer;user-select:none;z-index:1}
   th:hover{color:var(--acc)}
@@ -319,6 +345,7 @@ _SHELL = r"""<!DOCTYPE html>
   .bfill{background:linear-gradient(90deg,#0284c7,#38bdf8);height:100%;border-radius:6px}
   .bv{color:var(--mut);white-space:nowrap;text-align:right}
   .bp{color:var(--faint)}
+.sidecol .bl{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.3}
   .more{color:var(--mut);font-size:16px;margin-top:8px}
   .sec.zoomable{cursor:zoom-in;transition:border-color .15s}
   .sec.zoomable:hover{border-color:var(--acc)}
@@ -414,7 +441,7 @@ _SHELL = r"""<!DOCTYPE html>
   .card{border-left-width:1px;border-top:4px solid var(--c,var(--line));min-width:0;position:relative;overflow:hidden;padding:12px 14px 13px}
   .card::after{content:"";position:absolute;right:-34px;top:-34px;width:120px;height:120px;border-radius:50%;pointer-events:none;background:radial-gradient(circle,color-mix(in srgb,var(--c,#38bdf8) 20%,transparent),transparent 70%)}
   .card .kh{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}
-  .card .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .l{white-space:normal;overflow:hidden;min-width:0;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   .card .kp{flex:none;font-size:16px;font-weight:700;letter-spacing:.01em;font-variant-numeric:tabular-nums;color:var(--c);background:color-mix(in srgb,var(--c) 15%,transparent);padding:1px 8px;border-radius:20px}
   .card .n{font-size:44px;line-height:1.12;margin-top:1px}
   .card .kbar{margin-top:9px}
@@ -493,6 +520,7 @@ _SHELL = r"""<!DOCTYPE html>
       <button class="tab active" data-tab="data">Data</button>
       <button class="tab" data-tab="dashboard">Dashboard</button>
       <button class="tab" data-tab="progress">Progress</button>
+      <button class="tab" data-tab="ptable">Tabel</button>
       <span class="gen" id="shown"></span>
       <button id="png" class="pngbtn" title="Unduh tampilan ini sebagai PNG (tanpa header, judul tab, &amp; ringkasan AI)">&#11015; PNG</button>
       <div class="aiwrap" style="display:none">
@@ -501,6 +529,8 @@ _SHELL = r"""<!DOCTYPE html>
         <span class="gen" id="aifoot"></span>
       </div>
     </div>
+
+    <a href="../data_sample.csv" download class="pngbtn" title="Unduh data sebagai CSV">&#10006; CSV</a>
 
     <section id="panel-data" class="panel active">
       <div class="tblwrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
@@ -525,6 +555,10 @@ _SHELL = r"""<!DOCTYPE html>
       <div class="cards" id="pkpi"></div>
       <div class="aisum" id="aisum" style="display:none"></div>
       <div class="grid" id="progressgrid"></div>
+    </section>
+
+    <section id="panel-ptable" class="panel">
+      <div id="ptable"></div>
     </section>
   </div>
 </div>
@@ -573,7 +607,7 @@ _SHELL = r"""<!DOCTYPE html>
 let COLUMNS = [], DATA = [], META = {}, LABEL = {};
 let STATUS_DEF = [], STATUS = {}, STATUS_ORDER = [], SUBMIT_KEYS = [], FINAL_KEYS = [];
 let FILTER_KEYS = [], MULTI_KEYS = [], CHARTS = [];
-let state = { q:"", page:0, pageSize:100, sort:{key:null, dir:1}, filters:{} };
+let state = { q:"", page:0, pageSize:100, sort:{key:null, dir:1}, filters:{}, graphKey:null };
 let CUR = { sid:"", pid:"", periods:[] };  // current survey + period (on-demand backend flow)
 
 const PREFERRED_FILTERS = ["periode","name","prov","kab","kec","desa","status","peran","mode","petugas","data3","data4","data9"];
@@ -596,7 +630,12 @@ const CHART_DEFS = [
 
 /* ---------- shared helpers ---------- */
 function esc(v){ return String(v ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-function val(r,k){ const v = r[k]; return v === null || v === undefined ? "" : v; }
+function val(r,k){ const v = r[k]; if (v === null || v === undefined) return "";
+  /* Python serializer junk leaked as literal strings ("None" x10638, "undefined"):
+     treat as empty. Root-cause fix - enum detection (numbered gate), filter option
+     lists, and every table all read through val(). */
+  if (v === "None" || v === "undefined" || v === "null") return "";
+  return v; }
 
 function canonStatus(v){
   const s = String(v || "").trim().toUpperCase();
@@ -610,11 +649,16 @@ function aggregate(rows){
   for (const r of rows){ o.total++; o.counts[canonStatus(val(r,"status"))]++; if (val(r,"petugas")) o.assigned++; }
   return o;
 }
+/* Group identity = *_code, display = region name: FASIH returns one name under
+   two codes (JAYAPURA = both 9403 and 9471), so name-keyed groups merged them.
+   ponytail: n = first row's name for the group; upgrade = canonical code->label
+   table at render if one group ever carries conflicting names. */
+const gkey = (r, key) => String(val(r, key + "_code") || val(r, key) || "(kosong)");
 function aggGroups(rows, groupKey){
   const m = new Map();
   for (const r of rows){
-    const g = String(val(r,groupKey) || "(kosong)");
-    if (!m.has(g)) m.set(g, { total:0, assigned:0, counts:zeroCounts() });
+    const g = gkey(r, groupKey);
+    if (!m.has(g)) m.set(g, { n: String(val(r, groupKey) || g), total:0, assigned:0, counts:zeroCounts() });
     const o = m.get(g); o.total++; o.counts[canonStatus(val(r,"status"))]++; if (val(r,"petugas")) o.assigned++;
   }
   return [...m.entries()].map(([g,o]) => ({ g, ...o }));
@@ -627,7 +671,7 @@ const pctSubmit = o => o.total ? submitUp(o)/o.total*100 : 0;
 const pctFinal = o => o.total ? finalN(o)/o.total*100 : 0;
 const pctStarted = o => o.total ? startedN(o)/o.total*100 : 0;
 const pctAssign = o => o.total ? o.assigned/o.total*100 : 0;
-// Warna nama kabupaten per % submit+: <25 merah, 25-50 oranye, 50-75 kuning, >75 hijau.
+// Warna nama kabupaten per % progress: <25 merah, 25-50 oranye, 50-75 kuning, >75 hijau.
 // ponytail: kuning dipakai versi lebih gelap (#ca8a04) agar tetap terbaca di latar putih; ganti #eab308 bila minta kuning murni.
 const pctColor = p => p < 25 ? "#dc2626" : p < 50 ? "#ea580c" : p <= 75 ? "#ca8a04" : "#16a34a";
 const pctTier = p => p < 25 ? "Kritis" : p < 50 ? "Rendah" : p <= 75 ? "Sedang" : "Tinggi";
@@ -662,7 +706,13 @@ function computeFilterKeys(){
       if (numbered) multi.push(k);
     }
   }
-  const prio = k => { const i = PREFERRED_FILTERS.indexOf(k); return i === -1 ? 1e3 : i; };
+  /* Promote the pendataan-outcome column to the head of the filter list so it reads
+     first. Passes `multi`: MULTI_KEYS is only assigned after this function returns. */
+  const statusKey = statusDataKey(multi);
+  const prio = k => {
+    if (k === statusKey) return -1;
+    const i = PREFERRED_FILTERS.indexOf(k); return i === -1 ? 1e3 : i;
+  };
   kept.sort((a,b) => prio(a.k) - prio(b.k) || a.n - b.n || a.k.localeCompare(b.k));
   return { keys: kept.map(x => x.k), multi };
 }
@@ -791,6 +841,35 @@ function barHTML(items, total){
     '</div>').join("");
 }
 
+/* Any enumerated column, broken down per area: shares of each option, stacked. */
+const ENUM_COLORS = ["#0ea5e9","#22c55e","#f59e0b","#ef4444","#a855f7","#14b8a6","#84cc16","#f97316","#ec4899","#64748b","#0891b2","#65a30d"];
+function aggEnum(rows, key, gk){
+  const m = new Map();
+  for (const r of rows){
+    const g = gkey(r, gk);
+    const v = String(val(r, key) || "(kosong)");
+    let o = m.get(g); if (!o){ o = { counts:{}, total:0, n: String(val(r, gk) || g) }; m.set(g, o); }
+    o.counts[v] = (o.counts[v] || 0) + 1; o.total++;
+  }
+  return [...m.entries()].map(([g,o]) => ({ g, ...o }));
+}
+function enumRow(g, o, opts){
+  const segs = opts.map((v,i) => {
+    const n = o.counts[v] || 0; if (!n) return "";
+    return '<div class="seg" style="width:' + (n / o.total * 100).toFixed(2) + '%;background:' +
+      ENUM_COLORS[i % ENUM_COLORS.length] + '" title="' + esc(v) + ": " + n + '"></div>';
+  }).join("");
+  return '<div class="srow" title="' + esc(g) + ": n=" + o.total + '">' +
+    '<div class="sbl"><span class="snm" title="' + esc(g) + '">' + esc(g) + "</span></div>" +
+    '<div class="sbtrack"><div class="sbfill">' + segs + "</div></div>" +
+    '<div class="sbv"><span class="ntot">n=' + o.total.toLocaleString("id-ID") + "</span></div></div>";
+}
+function enumLegend(opts){
+  return '<div class="legend"><div class="lgh">Legenda opsi</div>' + opts.map((v,i) =>
+    '<span><i class="sw" style="background:' + ENUM_COLORS[i % ENUM_COLORS.length] + '"></i>' +
+    esc(v) + "</span>").join("") + "</div>";
+}
+
 function renderDashboard(){
   const grid = document.getElementById("chartgrid");
   grid.innerHTML = CHARTS.map(([id, title]) =>
@@ -847,53 +926,37 @@ function sec(title, sub, inner, cls){
   return '<div class="sec' + (cls ? " " + cls : "") + '"><h3>' + esc(title) + '</h3>' + (sub ? '<div class="sub">' + esc(sub) + '</div>' : "") + inner + '</div>';
 }
 
-function stackRow(g, o, showN, colorName){
-  const segs = STATUS_ORDER.map(k => {
-    const v = o.counts[k] || 0; if (!v) return "";
-    const w = o.total ? v/o.total*100 : 0;
-    return '<div class="seg" style="width:' + w.toFixed(2) + '%;background:' + STATUS[k].color +
-      '" title="' + esc(g) + " - " + esc(STATUS[k].label) + ": " + v + '"></div>';
-  }).join("");
-  const p = pctSubmit(o);
-  return '<div class="srow" title="' + esc(g) + ": n=" + o.total + '">' +
-    '<div class="sbl"' + (colorName ? ' style="color:' + pctColor(p) + '"' : "") + '>' +
-      (colorName ? '<span class="tier">' + pctTier(p) + '</span>' : "") +
-      '<span class="snm" title="' + esc(g) + '">' + esc(g) + "</span></div>" +
-    '<div class="sbtrack"><div class="sbfill">' + segs + "</div></div>" +
-    '<div class="sbv"><b>' + p.toFixed(0) + '%</b>' +
-      (showN ? ' <span class="ntot">n=' + o.total.toLocaleString("id-ID") + "</span>" : "") + "</div></div>";
-}
-
-function statusLegend(present, all){
-  return '<div class="legend"><div class="lgh">Legenda status</div>' + STATUS_DEF.filter(d => d.key !== "other" || present.has("other")).map(d => {
-    const c = all ? (all.counts[d.key] || 0) : null;
-    const pv = all && all.total ? c / all.total * 100 : null;
-    return '<span><i class="sw" style="background:' + d.color + '"></i>' + esc(d.label) +
-      (all ? ' <b>' + c.toLocaleString("id-ID") + '</b><span class="lp">' + pv.toFixed(0) + '%</span>' : "") + "</span>";
-  }).join("") + "</div>";
-}
-
-function tierLegend(){
+function tierLegend(h){
   const t = [["#dc2626","Kritis &lt;25%"],["#ea580c","Rendah 25\u201349%"],["#ca8a04","Sedang 50\u201375%"],["#16a34a","Tinggi &gt;75%"]];
-  return '<div class="legend"><div class="lgh">Warna nama &amp; label = % submit+</div>' +
+  return '<div class="legend"><div class="lgh">' + (h || "Warna nama &amp; label = % progress") + '</div>' +
     t.map(([c,l]) => '<span><i class="sw" style="background:' + c + '"></i>' + l + "</span>").join("") + "</div>";
 }
 
-function donut(all){
-  const total = all.total || 1, R = 70, SW = 50, C = 2 * Math.PI * R;
-  let acc = 0;
-  const segs = STATUS_ORDER.map(k => {
-    const v = all.counts[k] || 0; if (!v) return "";
-    const len = v / total * C, off = -acc * C; acc += v / total;
-    return '<circle cx="95" cy="95" r="' + R + '" fill="none" stroke="' + STATUS[k].color +
-      '" stroke-width="' + SW + '" stroke-dasharray="' + len.toFixed(2) + " " + (C - len).toFixed(2) +
-      '" stroke-dashoffset="' + off.toFixed(2) + '"></circle>';
-  }).join("");
-  const ring = segs || '<circle cx="95" cy="95" r="' + R + '" fill="none" stroke="#334155" stroke-width="' + SW + '"></circle>';
+/* Progress row: single fill colored by pctColor(p), done/target in ntot. */
+function progRow(g, done, total){
+  const p = total ? done / total * 100 : 0, c = pctColor(p);
+  return '<div class="srow" title="' + esc(g) + ": " + done + "/" + total + '">' +
+    '<div class="sbl" style="color:' + c + '"><span class="tier">' + pctTier(p) + '</span>' +
+      '<span class="snm" title="' + esc(g) + '">' + esc(g) + "</span></div>" +
+    '<div class="sbtrack"><div class="sbfill" style="width:' + p.toFixed(1) + '%;background:' + c + '"></div></div>' +
+    '<div class="sbv"><b>' + p.toFixed(0) + '%</b> <span class="ntot">' + done + "/" + total + "</span></div></div>";
+}
+
+/* Progress donut: done vs sisa-ke-target, hole = progress %. Track uses
+   var(--track) so it follows the theme. Empty target -> plain ring, 0%. */
+function donut(p){
+  const t = p.target, R = 70, SW = 50, C = 2 * Math.PI * R;
+  const pct = t ? p.done / t * 100 : 0;
+  const len = Math.min(pct, 100) / 100 * C;
+  const ring = t
+    ? '<circle cx="95" cy="95" r="' + R + '" fill="none" style="stroke:var(--track)" stroke-width="' + SW + '"></circle>' +
+      '<circle cx="95" cy="95" r="' + R + '" fill="none" stroke="' + pctColor(pct) + '" stroke-width="' + SW +
+        '" stroke-dasharray="' + len.toFixed(2) + " " + (C - len).toFixed(2) + '"></circle>'
+    : '<circle cx="95" cy="95" r="' + R + '" fill="none" style="stroke:var(--track)" stroke-width="' + SW + '"></circle>';
   return '<div class="donutwrap"><div class="donut">' +
-    '<svg viewBox="0 0 190 190" width="190" height="190" role="img" aria-label="Komposisi status sampel">' +
+    '<svg viewBox="0 0 190 190" width="190" height="190" role="img" aria-label="Progress terhadap target sampel utama">' +
     '<g transform="rotate(-90 95 95)">' + ring + '</g></svg>' +
-    '<div class="dhole"><b>' + (all.total ? pctSubmit(all).toFixed(1) : "0.0") + '%</b><span>submit+</span></div></div></div>';
+    '<div class="dhole"><b>' + pct.toFixed(1) + '%</b><span>progress</span></div></div></div>';
 }
 
 function cardHTML(l, v, s, col, pc, hero){
@@ -909,8 +972,8 @@ function cardHTML(l, v, s, col, pc, hero){
     "</div>";
 }
 
-function progressCards(all, days){
-  const rem = all.total - submitUp(all);
+function progressCards(all, days, P){
+  const rem = P.tot.target - P.tot.done;
   const npd = rem / Math.max(days.left, 1);
   const rej = all.counts.rejected || 0;
   const elapsedPct = days.total ? (days.total - days.left) / days.total * 100 : 0;
@@ -925,11 +988,42 @@ function progressCards(all, days){
   document.getElementById("pkpi").innerHTML = items.map(([l,v,s,col,pc,hero]) => cardHTML(l, v, s, col, pc, hero)).join("");
 }
 
+// Which column holds "Hasil Pendataan": a label declared by the survey config
+// (config.py data_column_labels_by_survey, surfaced via LABEL) wins; otherwise the
+// first column detected as an enumerated "1. ..." list. null => the survey has no
+// such column, and the assignment/priority panels stay as the fallback.
+function statusDataKey(keys){
+  for (const k in LABEL) if (/^hasil pendataan$/i.test(LABEL[k] || "")) return k;
+  /* Structural detection - no survey-specific text, no key names. Only enum columns
+     reach MULTI_KEYS (values must be numbered "1. ..."), so plain lists (UTP/UPB,
+     komoditas in words, codes) never qualify. Among those, the pendataan-outcome
+     column is the one with 3..12 options that stay distinct after case-folding -
+     which rejects the commodity list "01. BAWANG MERAH" vs "01. Bawang Merah" and
+     "Kategori Sampel" (2 options).
+     ponytail: ceiling = a numbered 3..12 option list that is not a status is
+     mis-picked, and a status numbered "[1] ..." with inline HTML (VPEK data8) is
+     missed -> falls back to the assignment panels; upgrade = declare the label per
+     survey in config.py data_column_labels_by_survey, checked first below. */
+  let best = null, bestN = 0;
+  for (const k of (keys || MULTI_KEYS)){
+    const seen = new Set(), folded = new Set();
+    for (const r of DATA){
+      const v = String(val(r, k)); if (!v) continue;
+      seen.add(v); folded.add(v.toUpperCase());
+      if (seen.size > 12) break;
+    }
+    if (seen.size >= 3 && seen.size <= 12 && folded.size === seen.size && seen.size > bestN){
+      best = k; bestN = seen.size;
+    }
+  }
+  return best;
+}
+
 function assignRows(provs){
   const max = Math.max(...provs.map(o => o.total), 1);
   return provs.map(o => {
     const p = pctAssign(o), a = o.assigned, na = o.total - o.assigned;
-    return '<div class="srow"><div class="sbl">' + esc(o.g) + '</div>' +
+    return '<div class="srow"><div class="sbl">' + esc(o.n) + '</div>' +
       '<div class="sbtrack"><div class="sbfill" style="width:' + (o.total/max*100).toFixed(1) + '%">' +
         '<div class="seg" style="width:' + p.toFixed(2) + '%;background:#2F6FED" title="Sudah assign: ' + a + '"></div>' +
         '<div class="seg" style="width:' + (100-p).toFixed(2) + '%;background:#F0A3A6" title="Belum assign: ' + na + '"></div>' +
@@ -938,10 +1032,10 @@ function assignRows(provs){
   }).join("");
 }
 
-function priorityRows(kabs, days){
-  const rem = kabs.map(o => ({ g:o.g, rem:o.total - submitUp(o), npd:(o.total - submitUp(o)) / Math.max(days.left,1) }))
+function priorityRows(P, days){
+  const rem = [...P.map("kab").values()].map(o => ({ g:o.n, rem:o.target - o.done, npd:(o.target - o.done) / Math.max(days.left,1) }))
                   .filter(x => x.rem > 0).sort((a,b) => b.rem - a.rem).slice(0, 10);
-  if (!rem.length) return '<div class="empty">Semua sampel sudah submit+</div>';
+  if (!rem.length) return '<div class="empty">Semua target sudah tercapai</div>';
   const max = Math.max(...rem.map(x => x.rem), 1);
   const thr = [...rem.map(x => x.npd)].sort((a,b) => a-b)[Math.floor(rem.length*0.7)] || 0;
   return rem.map(x => {
@@ -952,34 +1046,162 @@ function priorityRows(kabs, days){
   }).join("");
 }
 
+/* --- Progress metric shared by prov/kab bars, donut, tables, priority list,
+   pace card and AI payload. target = Kategori Sampel "1. Utama" rows; done =
+   utama AND hasil pendataan "1. Berhasil diwawancarai" AND status >= submitted.
+   Degraded honestly: no sampel column => every row is target; sampel column
+   present but no recognized "1. Utama" value (odd format) => same fallback
+   instead of silent 0/0. done counts only target rows => done <= target.
+   ponytail: sampel matched by label, hasil by value scan (payloads have no
+   headers); upgrade = declare both per survey in config.py
+   data_column_labels_by_survey. */
+function sampColOf(){ return COLUMNS.find(c => /kategori\s*sampel/i.test(c.label || "")); }
+function progOf(rows){
+  const sCol = sampColOf();
+  const hk = COLUMNS.find(c => /^data\d+$/.test(c.key) &&
+    groupCount(r => val(r, c.key)).some(i => /^1\.?\s*berhasil diwawancarai?/i.test(String(i.k))));
+  const utama = r => !sCol || /^1\.?\s*utama/i.test(String(val(r, sCol.key) || ""));
+  const done  = r => SUBMIT_KEYS.includes(canonStatus(val(r, "status"))) &&
+    (!hk || /^1\.?\s*berhasil diwawancarai?/i.test(String(val(r, hk.key) || "")));
+  const useU = !!sCol && rows.some(utama);
+  const inT = r => !useU || utama(r);
+  const map = key => {
+    const m = new Map();
+    for (const r of rows) if (inT(r)){
+      const g = gkey(r, key);
+      let o = m.get(g); if (!o) m.set(g, o = { g, n: String(val(r, key) || g), target:0, done:0 });
+      o.target++; if (done(r)) o.done++;
+    }
+    return m;
+  };
+  const tot = { target:0, done:0 };
+  for (const r of rows) if (inT(r)){ tot.target++; if (done(r)) tot.done++; }
+  return { hk, useU, map, tot, pct: o => o.target ? o.done / o.target * 100 : 0 };
+}
+
 function renderProgress(){
   const all = aggregate(filtered);
-  const present = new Set(STATUS_ORDER.filter(k => (all.counts[k]||0) > 0));
   const days = daysInfo();
   const hasProv = COLUMNS.some(c => c.key === "prov");
   const hasKab = COLUMNS.some(c => c.key === "kab");
   const provs = hasProv ? aggGroups(filtered, "prov").sort((a,b) => pctSubmit(b) - pctSubmit(a) || b.total - a.total) : [];
-  const kabs  = hasKab  ? aggGroups(filtered, "kab").sort((a,b) => pctSubmit(b) - pctSubmit(a) || b.total - a.total) : [];
 
+  /* Progress per prov/kab (agreed logic) via shared progOf(): target = Kategori
+     Sampel "1. Utama"; done = utama AND hasil "1. Berhasil diwawancarai" AND
+     status >= submitted. */
+  const P = progOf(filtered);
+  const pKabs = [...P.map("kab").values()].sort((a,b) => P.pct(b) - P.pct(a) || b.target - a.target || a.n.localeCompare(b.n));
+  const pProvs = [...P.map("prov").values()].sort((a,b) => P.pct(b) - P.pct(a) || b.target - a.target || a.n.localeCompare(b.n));
+  const ksub = "Urut dari % progress tertinggi \u2022 target: " +
+    (P.useU ? "sampel utama" : "semua sampel") + " \u2022 progress: " +
+    (P.hk ? "berhasil diwawancarai & status \u2265 submit" : "status \u2265 submit");
+
+  /* Column picker for the right-hand breakdown panel. Native <select>, dataN
+     columns only; empty option = auto (label match, else first detected enum).
+     ponytail: in-memory only — survives re-render but not a page reload; move
+     into ui_state.json alongside `filters` if users ask for persistence. */
+  const gcOpts = ['<option value="">(otomatis)</option>'].concat(
+    COLUMNS.filter(c => /^data\d+$/.test(c.key)).map(c =>
+      '<option value="' + c.key + '"' + (c.key === state.graphKey ? " selected" : "") + ">" +
+      esc(c.label || c.key) + "</option>")).join("");
   document.getElementById("pmeta").innerHTML =
     '<div class="t">' + esc(META.name || "Monitoring Progress") + '</div>' +
     '<div class="d">Data per ' + esc(fmtStamp(META.generated)) + "  |  " + esc(days.txt) +
-    "  |  " + filtered.length.toLocaleString("id-ID") + " sampel (terfilter)</div>";
+    "  |  " + filtered.length.toLocaleString("id-ID") + " sampel (terfilter)" +
+    '  <select id="gcol" style="font:inherit">' + gcOpts + "</select></div>";
+  document.getElementById("gcol").onchange = e => { state.graphKey = e.target.value || null; renderProgress(); renderPTable(); };
 
-  progressCards(all, days);
+  progressCards(all, days, P);
 
   const sections = [];
-  sections.push(sec("Komposisi Status", "Seluruh sampel (terfilter)", donut(all) + statusLegend(present, all), "span5 hero"));
-  if (hasProv) sections.push(sec("Progress per Provinsi", "% dari total sampel \u2022 angka tebal = % submit+",
-      tierLegend() + (provs.map(o => stackRow(o.g, o, true, true)).join("") || '<div class="empty">tidak ada data</div>'), "span7"));
-  if (hasKab) sections.push(sec("Progress per Kabupaten/Kota", "Urut dari % submit+ tertinggi \u2022 warna = status sampel",
-      tierLegend() + (kabs.map(o => stackRow(o.g, o, true, true)).join("") || '<div class="empty">tidak ada data</div>'), "span9"));
-  /* Right 1/4 column: assignment + priority stacked so the whole grid fits one screen. */
-  const side = (hasProv ? sec("Status Assignment", "Sudah vs belum di-assign ke petugas (per provinsi)", assignRows(provs), "") : "") +
-    (hasKab ? sec("Prioritas: Sisa Sampel Terbanyak", "10 kabupaten dengan sisa (belum submit+) terbanyak", priorityRows(kabs, days), "") : "");
-  if (side) sections.push('<div class="sidecol">' + side + "</div>");
+  /* A stale pick (column dropped after a rescan) falls back to auto-detect.
+     ponytail: the legend lists every distinct option of the picked column — a
+     high-cardinality pick (e.g. a name column) would flood it; cap the legend
+     if that ever happens, or switch back to (otomatis). */
+  const enumKey = (state.graphKey && COLUMNS.some(c => c.key === state.graphKey)) ? state.graphKey : statusDataKey();
+  const eOpts = enumKey ? groupCount(r => val(r, enumKey)).map(i => i.k) : [];
+  const eKabs = (enumKey && hasKab)
+    ? aggEnum(filtered, enumKey, "kab").sort((a,b) => b.total - a.total || a.n.localeCompare(b.n)) : [];
+  /* With a Hasil Pendataan column, it sits side by side with Progress-per-Kabupaten
+     as an equal pair (span6 + span6 = 12). Without one the Kabupaten section takes
+     the full span9 and the sidecol keeps assignment/priority (checkpoint-progress-tab). */
+  const wide = enumKey && hasKab ? "span6" : "span9";
+  sections.push(sec("Progress Keseluruhan",
+      P.tot.done.toLocaleString("id-ID") + " dari " + P.tot.target.toLocaleString("id-ID") + " sampel utama (terfilter)",
+      donut(P.tot), "span5 hero"));
+  if (hasProv) sections.push(sec("Progress per Provinsi", "progress: hasil diwawancarai & status \u2265 submit / target sampel utama",
+      tierLegend() + (pProvs.map(o => progRow(o.n, o.done, o.target)).join("") || '<div class="empty">tidak ada data</div>'), "span7"));
+  if (hasKab) sections.push(sec("Progress per Kabupaten/Kota", ksub,
+      tierLegend("Warna nama & label = % progress") + (pKabs.map(a => progRow(a.n, a.done, a.target)).join("") || '<div class="empty">tidak ada data</div>'), wide));
+  if (enumKey && hasKab){
+    sections.push(sec(LABEL[enumKey] || enumKey, "Semua kabupaten/kota \u2022 (terfilter)",
+      enumLegend(eOpts) + (eKabs.map(o => enumRow(o.n, o, eOpts)).join("") || '<div class="empty">tidak ada data</div>'), "span6"));
+  } else {
+    const side = (hasProv ? sec("Status Assignment", "Sudah vs belum di-assign ke petugas (per provinsi)", assignRows(provs), "") : "") +
+      (hasKab ? sec("Prioritas: Sisa Sampel Terbanyak", "10 kabupaten dengan sisa (target \u2212 progress) terbanyak", priorityRows(P, days), "") : "");
+    if (side) sections.push('<div class="sidecol">' + side + "</div>");
+  }
   document.getElementById("progressgrid").innerHTML = sections.join("");
   document.getElementById("aibtn").style.display = (BACKEND && AI_ON && filtered.length) ? "" : "none";
+}
+
+/* Publishable table view of Progress: two tables - per-status progress and the
+   detected enum breakdown (e.g. Hasil Pendataan) - one row per kabupaten plus
+   its provinsi, sorted by provinsi/kabupaten name. ponytail: no click-sort/
+   paging/frozen columns; upgrade = reuse Data-tab sort/pager once columns
+   outgrow the scroll viewport. */
+function renderPTable(){
+  const el = document.getElementById("ptable");
+  const gk = COLUMNS.some(c => c.key === "kab") ? "kab" : "prov";
+  const gc = COLUMNS.find(c => c.key === gk);
+  const withProv = gk === "kab" && COLUMNS.some(c => c.key === "prov");
+  const provOf = new Map();
+  if (withProv) filtered.forEach(r => {
+    const k = gkey(r, gk); if (k && !provOf.has(k)) provOf.set(k, val(r, "prov"));
+  });
+  const rows = aggGroups(filtered, gk).sort((a,b) =>
+    (withProv ? String(provOf.get(a.g) || "").localeCompare(String(provOf.get(b.g) || "")) : 0) ||
+    String(a.n).localeCompare(String(b.n)));
+  const enumKey = (state.graphKey && COLUMNS.some(c => c.key === state.graphKey)) ? state.graphKey : statusDataKey();
+  /* Third table (div[3], Hasil Pendataan): counts only sampel whose status is
+     submitted or beyond (submit+ = submitted/pengawas/admin); Open/Draft/Rejected
+     rows are excluded. Target column = jumlah sampel Kategori Sampel "1. Utama"
+     (semua status) - the same denominator as the kab progress bars. */
+  const subm = filtered.filter(r => SUBMIT_KEYS.includes(canonStatus(val(r, "status"))));
+  const eMap = new Map((enumKey ? aggEnum(subm, enumKey, gk) : []).map(o => [o.g, o]));
+  const eOpts = enumKey ? [...new Set(subm.map(r => String(val(r, enumKey) || "(kosong)")))].sort() : [];
+  const P = progOf(filtered);
+  const pm = P.map(gk);
+  const gp = o => pm.get(o.g) || { target:0, done:0 };
+  const th0 = (withProv ? '<th class="nm">' + esc((COLUMNS.find(c => c.key === "prov") || {}).label || "Provinsi") + "</th>" : "") +
+    '<th class="nm">' + esc(gc ? gc.label : gk) + "</th>";
+  const td0 = o => (withProv ? '<td class="nm">' + esc(provOf.get(o.g) || "") + "</td>" : "") +
+    '<td class="nm" style="color:' + pctColor(P.pct(gp(o))) + '">' + esc(o.n) + "</td>";
+  const cap = '<div class="pmeta"><div class="t">' + esc(META.name || "Tabel Progress") +
+    '</div><div class="d">Data per ' + esc(fmtStamp(META.generated)) + "  |  " +
+    filtered.length.toLocaleString("id-ID") + " sampel  |  urut " +
+    (withProv ? "provinsi, kabupaten" : gc ? gc.label : gk) + "  |  baris: " +
+    esc(gc ? gc.label : gk) + "</div></div>";
+  if (!rows.length){ el.innerHTML = '<div class="empty">tidak ada data</div>'; return; }
+  const t1 = '<div class="tblwrap"><table><thead><tr>' + th0 +
+      "<th>Target</th><th>Assign</th>" +
+      STATUS_DEF.map(d => "<th>" + esc(d.label || d.key) + "</th>").join("") +
+      "<th>Progress</th></tr></thead><tbody>" +
+      rows.map(o => "<tr>" + td0(o) + "<td>" + gp(o).target + "</td><td>" + o.assigned + "</td>" +
+        STATUS_DEF.map(d => "<td>" + (o.counts[d.key] || 0) + "</td>").join("") +
+        "<td>" + P.pct(gp(o)).toFixed(1) + "%</td></tr>").join("") +
+    "</tbody></table></div>";
+  const t2 = eOpts.length
+    ? '<div class="tblwrap"><table><thead><tr>' + th0 + "<th>Target</th>" +
+        eOpts.map(o => "<th>" + esc(o) + "</th>").join("") + "</tr></thead><tbody>" +
+        rows.map(o => {
+          const eo = eMap.get(o.g);
+          return "<tr>" + td0(o) + "<td>" + gp(o).target + "</td>" +
+            eOpts.map(k => "<td>" + ((eo && eo.counts[k]) || 0) + "</td>").join("") + "</tr>";
+        }).join("") + "</tbody></table></div>"
+    : "";
+  el.innerHTML = cap + sec("Progress", "target: sampel utama (semua status) \u2022 kolom status: seluruh sampel \u2022 progress: hasil diwawancarai & status \u2265 submit / target", tierLegend() + t1) +
+    (t2 ? sec(LABEL[enumKey] || enumKey, "target: jumlah sampel Kategori Sampel 1. Utama (semua status) \u2022 kolom hasil: hanya status submitted+", tierLegend() + t2) : "");
 }
 
 /* ---------------- DATA TAB ---------------- */
@@ -1023,6 +1245,7 @@ function apply(){
   renderCards();
   renderDashboard();
   renderProgress();
+  renderPTable();
   renderTable();
 }
 
@@ -1281,30 +1504,38 @@ function dlName(){
 
 /* ponytail: DOM->PNG has no reliable native drop-in (SVG foreignObject drops
    the stylesheet + web fonts and taints the canvas on Safari) - the library stays. */
-async function panelPNG(){
+async function elPNG(el){
   if (typeof html2canvas !== "function") throw new Error("Pustaka ekspor PNG belum termuat (butuh koneksi internet).");
-  const panel = document.querySelector(".panel.active");
-  if (!panel) return null;
   const bg = getComputedStyle(document.body).backgroundColor;
   /* The AI summary never belongs in an image - it is the WhatsApp caption.
      onclone: the "rise" entrance animation has fill-mode:backwards, so the clone
      starts at opacity:0 and html2canvas captures it mid-delay -> tiles go missing.
      Kill animation in the throwaway clone only, so the screen is untouched. */
-  const canvas = await html2canvas(panel, { scale: 4, backgroundColor: bg, logging: false, useCORS: true,
-    ignoreElements: el => el.id === "aisum",
+  const canvas = await html2canvas(el, { scale: 4, backgroundColor: bg, logging: false, useCORS: true,
+    ignoreElements: e => e.id === "aisum",
     onclone: doc => {
-      doc.querySelectorAll("*").forEach(el => el.style.animation = "none");
+      doc.querySelectorAll("*").forEach(e => e.style.animation = "none");
       /* html2canvas re-measures text with canvas metrics, which run a hair wider
          than DOM layout, so it draws "..." on names that fit on screen.
          Name boxes already fit in DOM layout - just stop it ellipsizing them. */
-      doc.querySelectorAll(".snm").forEach(el => { el.style.overflow = "visible"; el.style.textOverflow = "clip"; });
+      doc.querySelectorAll(".snm").forEach(e => { e.style.overflow = "visible"; e.style.textOverflow = "clip"; });
+      /* Tabel-tab tables scroll in a 70vh box; unclip so every row (and the full
+         kabupaten name) is in the image, not just the visible slice. */
+      doc.querySelectorAll("#ptable .tblwrap").forEach(e => { e.style.maxHeight = "none"; e.style.overflow = "visible"; });
+      /* sticky headers can double-draw in html2canvas at full height - pin them to top in the clone. */
+      doc.querySelectorAll("#ptable thead th").forEach(e => e.style.position = "static");
     } });
   return new Promise(res => canvas.toBlob(res, "image/png"));
 }
-function grabPNG(blob){
+async function panelPNG(){
+  const panel = document.querySelector(".panel.active");
+  if (!panel) return null;
+  return elPNG(panel);
+}
+function grabPNG(blob, name){
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = dlName();
+  a.download = name || dlName();
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
@@ -1314,8 +1545,21 @@ pngBtn.onclick = async () => {
   const old = pngBtn.textContent;
   pngBtn.disabled = true; pngBtn.textContent = "Menyiapkan…";
   try {
-    const blob = await panelPNG();
-    if (blob) grabPNG(blob);
+    /* Tabel tab: one PNG per table (progress + hasil pendataan). ponytail: two
+       sequential a.click() downloads - if a browser ever eats the second one,
+       zip them or ask for a directory picker. */
+    const secs = document.querySelectorAll("#panel-ptable.active #ptable .sec");
+    if (secs.length){
+      for (const s of secs){
+        const slug = (s.querySelector("h3").textContent || "tabel").trim().toLowerCase()
+          .replace(/[^\w]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "tabel";
+        const blob = await elPNG(s);
+        if (blob) grabPNG(blob, dlName().replace(/\.png$/, "-" + slug + ".png"));
+      }
+    } else {
+      const blob = await panelPNG();
+      if (blob) grabPNG(blob);
+    }
   } catch(e){ alert("Gagal membuat PNG: " + e.message); }
   finally { pngBtn.disabled = false; pngBtn.textContent = old; }
 };
@@ -1463,20 +1707,29 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") refOpen(fals
 /* Progress tab: AI summary from pre-aggregated numbers (no per-sample rows). */
 function aiStats(){
   const all = aggregate(filtered), days = daysInfo();
+  const P = progOf(filtered);
+  const pm = { prov: P.map("prov"), kab: P.map("kab") };
   const provs = COLUMNS.some(c => c.key === "prov") ? aggGroups(filtered, "prov") : [];
   const kabs  = COLUMNS.some(c => c.key === "kab")  ? aggGroups(filtered, "kab")  : [];
-  const row = o => ({ wilayah:o.g, total:o.total, submit_plus_pct:+pctSubmit(o).toFixed(1),
-                      sisa_belum_submit:o.total - submitUp(o), sudah_assign_pct:+pctAssign(o).toFixed(1) });
+  const gp = (o, m) => m.get(o.g) || { target:0, done:0 };
+  const row = (o, m) => { const p = gp(o, m);
+    return { wilayah:o.n, target:p.target, done:p.done, progress_pct:+P.pct(p).toFixed(1),
+             sisa_target:p.target - p.done, total:o.total, submit_plus_pct:+pctSubmit(o).toFixed(1),
+             sisa_belum_submit:o.total - submitUp(o), sudah_assign_pct:+pctAssign(o).toFixed(1) }; };
   const byPct = a => a.slice().sort((x,y) => pctSubmit(y) - pctSubmit(x));
+  const sisa = (o, m) => { const p = gp(o, m); return p.target - p.done; };
   return {
     survei: META.name || "",
     periode: periodName(CUR.pid),
     tanggal_data: fmtStamp(META.generated),
     periode_tanggal: (META.startDate && META.endDate) ? META.startDate + " s/d " + META.endDate : "",
     hari_ke: days.elapsed, total_hari: days.total, sisa_hari: days.left,
-    target_per_hari: Math.ceil((all.total - submitUp(all)) / Math.max(days.left, 1)),
+    target_per_hari: Math.ceil((P.tot.target - P.tot.done) / Math.max(days.left, 1)),
     n_terfilter: filtered.length,
     jumlah_sampel: all.total,
+    target_sampel_utama: P.tot.target,
+    progress_selesai: P.tot.done,
+    persen_progress: +P.pct(P.tot).toFixed(1),
     status_counts: STATUS_ORDER.filter(k => (all.counts[k] || 0) > 0)
       .map(k => ({ status: STATUS[k].label, jumlah: all.counts[k] })),
     persen_sudah_mulai: +pctStarted(all).toFixed(1),
@@ -1485,9 +1738,9 @@ function aiStats(){
     ditolak_pengawas: all.counts.rejected || 0,
     provinsi_total: provs.length,
     kabkota_total: kabs.length,
-    provinsi_submit_tertinggi: byPct(provs).slice(0, 5).map(row),
-    provinsi_submit_terendah: byPct(provs).slice(-5).reverse().map(row),
-    kab_prioritas: kabs.slice().sort((a,b) => (b.total - submitUp(b)) - (a.total - submitUp(a))).slice(0, 10).map(row),
+    provinsi_submit_tertinggi: byPct(provs).slice(0, 5).map(o => row(o, pm.prov)),
+    provinsi_submit_terendah: byPct(provs).slice(-5).reverse().map(o => row(o, pm.prov)),
+    kab_prioritas: kabs.slice().sort((a,b) => sisa(b, pm.kab) - sisa(a, pm.kab)).slice(0, 10).map(o => row(o, pm.kab)),
     filter_aktif: Object.entries(state.filters || {}).filter(e => [].concat(e[1]).length).map(e => e[0] + "=" + [].concat(e[1]).join(",")),
   };
 }

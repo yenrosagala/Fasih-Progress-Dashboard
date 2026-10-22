@@ -43,6 +43,14 @@ datatable_all_user_url = f"{API_BASE_URL}/analytic/api/v2/assignment/datatable-a
 # positional keys (data1..data10) with no header metadata, so titles cannot be
 # scraped from the response. Map them per survey instead: the key is a
 # case-insensitive substring of the survey name, the value its labels.
+
+# Mapping of kab_code to preferred display name.
+# Used when the same kab name appears under different codes to avoid
+# confusion; only the listed codes are affected – add new entries as needed.
+KAB_NAME_OVERRIDES = {
+    "9471": "KOTA JAYAPURA",
+    "9403": "JAYAPURA",
+}
 #
 # Only surveys whose headers we have confirmed belong here. Anything else shows
 # an honest "Data 1..10" rather than a label borrowed from another survey -
